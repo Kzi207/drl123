@@ -95,3 +95,28 @@ export function calculateDRLScore(details: DRLDetails, sections: Section[], type
     return total + Math.min(sectionScore, section.maxPoints);
   }, 0);
 }
+
+export function getRank(points: number): string {
+  if (points >= 90) return 'Xuất sắc';
+  if (points >= 80) return 'Giỏi';
+  if (points >= 65) return 'Khá';
+  if (points >= 50) return 'Trung bình';
+  return 'Yếu';
+}
+
+export function numberToWords(n: number): string {
+  const words = [
+    'không', 'một', 'hai', 'ba', 'bốn', 'năm', 'sáu', 'bảy', 'tám', 'chín', 'mười',
+    'mười một', 'mười hai', 'mười ba', 'mười bốn', 'mười lăm', 'mười sáu', 'mười bảy', 'mười tám', 'mười chín',
+    'hai mươi', 'hai mươi mốt', 'hai mươi hai', 'hai mươi ba', 'hai mươi bốn', 'hai mươi lăm', 'hai mươi sáu', 'hai mươi bảy', 'hai mươi tám', 'hai mươi chín',
+    'ba mươi', 'ba mươi mốt', 'ba mươi hai', 'ba mươi ba', 'ba mươi bốn', 'ba mươi lăm', 'ba mươi sáu', 'ba mươi bảy', 'ba mươi tám', 'ba mươi chín',
+    'bốn mươi', 'bốn mươi mốt', 'bốn mươi hai', 'bốn mươi ba', 'bốn mươi bốn', 'bốn mươi lăm', 'bốn mươi sáu', 'bốn mươi bảy', 'bốn mươi tám', 'bốn mươi chín',
+    'năm mươi', 'năm mươi mốt', 'năm mươi hai', 'năm mươi ba', 'năm mươi bốn', 'năm mươi lăm', 'năm mươi sáu', 'năm mươi bảy', 'năm mươi tám', 'năm mươi chín',
+    'sáu mươi', 'sáu mươi mốt', 'sáu mươi hai', 'sáu mươi ba', 'sáu mươi bốn', 'sáu mươi lăm', 'sáu mươi sáu', 'sáu mươi bảy', 'sáu mươi tám', 'sáu mươi chín',
+    'bảy mươi', 'bảy mươi mốt', 'bảy mươi hai', 'bảy mươi ba', 'bảy mươi bốn', 'bảy mươi lăm', 'bảy mươi sáu', 'bảy mươi bảy', 'bảy mươi tám', 'bảy mươi chín',
+    'tám mươi', 'tám mươi mốt', 'tám mươi hai', 'tám mươi ba', 'tám mươi bốn', 'tám mươi lăm', 'tám mươi sáu', 'tám mươi bảy', 'tám mươi tám', 'tám mươi chín',
+    'chín mươi', 'chín mươi mốt', 'chín mươi hai', 'chín mươi ba', 'chín mươi bốn', 'chín mươi lăm', 'chín mươi sáu', 'chín mươi bảy', 'chín mươi tám', 'chín mươi chín',
+    'một trăm'
+  ];
+  return words[n] || String(n);
+}

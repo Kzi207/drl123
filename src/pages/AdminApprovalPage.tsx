@@ -1,19 +1,19 @@
-import { useState, useEffect, useRef } from 'react';
-import { useAuth } from '../context/AuthContext';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { drlService, studentService } from '../services/api';
 import { EVALUATION_DATA } from '../constants';
 import { DRLDetails, DRLScore, Student } from '../types';
 import { parseDRLDetails, calculateDRLScore, formatImageUrl } from '../lib/utils';
-import { Check, X, ChevronRight, Search, Filter, CheckCircle, AlertCircle, Eye, ChevronDown, ChevronUp, FileSpreadsheet, Printer, FolderArchive, Loader2, RefreshCw, RotateCcw, Trash2 as TrashIcon, Download } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
 import * as XLSX from 'xlsx';
-import { PrintableScorecard } from '../components/PrintableScorecard';
+import { PrintableScorecard, PrintableScorecardRef } from '../components/PrintableScorecard';
 import ImageLightbox from '../components/ImageLightbox';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 // @ts-ignore
 import html2pdf from 'html2pdf.js';
+import { AdminScoreList } from '../components/AdminScoreList';
+import { AdminScoreDetail } from '../components/AdminScoreDetail';
 
 export default function AdminApprovalPage() {
   const [scores, setScores] = useState<DRLScore[]>([]);
@@ -29,7 +29,7 @@ export default function AdminApprovalPage() {
   const [filterClass, setFilterClass] = useState('all');
   const [expandedSections, setExpandedSections] = useState(['sec-1']);
   const printRef = useRef<HTMLDivElement>(null);
-  const singlePrintRef = useRef<HTMLDivElement>(null);
+  const singlePrintRef = useRef<PrintableScorecardRef>(null);
   const [printingStudent, setPrintingStudent] = useState<{student: Student, score?: DRLScore} | null>(null);
 
   // Lightbox state
@@ -77,16 +77,30 @@ export default function AdminApprovalPage() {
             el.style.left = '0';
           }
 
-          Array.from(clonedDoc.styleSheets).forEach((sheet) => {
+          // Strip oklch from all style tags in the cloned document
+          const styleTags = clonedDoc.getElementsByTagName('style');
+          for (let i = 0; i < styleTags.length; i++) {
             try {
-              const rules = Array.from(sheet.cssRules);
-              for (let i = rules.length - 1; i >= 0; i--) {
-                if (rules[i].cssText.includes('oklch')) {
-                  sheet.deleteRule(i);
-                }
+              const style = styleTags[i];
+              if (style.textContent?.includes('oklch')) {
+                style.textContent = style.textContent.replace(/oklch\([^)]+\)/g, '#000000');
               }
             } catch (e) {}
-          });
+          }
+
+          // Also try to clean styleSheets if possible
+          try {
+            Array.from(clonedDoc.styleSheets).forEach((sheet) => {
+              try {
+                const rules = Array.from(sheet.cssRules);
+                for (let i = rules.length - 1; i >= 0; i--) {
+                  if (rules[i].cssText.includes('oklch')) {
+                    (sheet as CSSStyleSheet).deleteRule(i);
+                  }
+                }
+              } catch (e) {}
+            });
+          } catch (e) {}
         }
       },
       jsPDF: { unit: 'mm' as const, format: 'a4' as const, orientation: 'portrait' as const }
@@ -106,54 +120,14 @@ export default function AdminApprovalPage() {
   const [exportingPDF, setExportingPDF] = useState<string | null>(null);
 
   const exportSinglePDF = async (student: Student, score?: DRLScore) => {
-    if (!student) return;
+    if (!student || !singlePrintRef.current) return;
     setExportingPDF(student.id);
     
     // Wait for the printable component to render
     await new Promise(resolve => setTimeout(resolve, 500));
     
-    const element = singlePrintRef.current;
-    if (!element) {
-      setExportingPDF(null);
-      return;
-    }
-
-    const opt = {
-      margin: 10,
-      filename: `PhieuDiemRL_${student.id}.pdf`,
-      image: { type: 'jpeg' as const, quality: 0.98 },
-      html2canvas: { 
-        scale: 2, 
-        useCORS: true,
-        letterRendering: true,
-        scrollX: 0,
-        scrollY: 0,
-        onclone: (clonedDoc: Document) => {
-          // Ensure the cloned element is visible for capture
-          const el = clonedDoc.getElementById('printable-single-container');
-          if (el) {
-            el.style.opacity = '1';
-            el.style.position = 'static';
-            el.style.left = '0';
-          }
-
-          Array.from(clonedDoc.styleSheets).forEach((sheet) => {
-            try {
-              const rules = Array.from(sheet.cssRules);
-              for (let i = rules.length - 1; i >= 0; i--) {
-                if (rules[i].cssText.includes('oklch')) {
-                  sheet.deleteRule(i);
-                }
-              }
-            } catch (e) {}
-          });
-        }
-      },
-      jsPDF: { unit: 'mm' as const, format: 'a4' as const, orientation: 'portrait' as const }
-    };
-
     try {
-      await html2pdf().set(opt).from(element).save();
+      await singlePrintRef.current.downloadPDF();
       toast.success('Đã tải xuống file PDF');
     } catch (err) {
       console.error('PDF export failed', err);
@@ -240,20 +214,30 @@ export default function AdminApprovalPage() {
             useCORS: true, 
             letterRendering: true,
             onclone: (clonedDoc: Document) => {
-              // Strip oklch from all stylesheets in the cloned document
-              // This prevents html2canvas from crashing on unsupported color functions
-              Array.from(clonedDoc.styleSheets).forEach((sheet) => {
+              // Strip oklch from all style tags in the cloned document
+              const styleTags = clonedDoc.getElementsByTagName('style');
+              for (let i = 0; i < styleTags.length; i++) {
                 try {
-                  const rules = Array.from(sheet.cssRules);
-                  for (let i = rules.length - 1; i >= 0; i--) {
-                    if (rules[i].cssText.includes('oklch')) {
-                      sheet.deleteRule(i);
-                    }
+                  const style = styleTags[i];
+                  if (style.textContent?.includes('oklch')) {
+                    style.textContent = style.textContent.replace(/oklch\([^)]+\)/g, '#000000');
                   }
-                } catch (e) {
-                  // Ignore cross-origin stylesheet errors
-                }
-              });
+                } catch (e) {}
+              }
+
+              // Also try to clean styleSheets if possible
+              try {
+                Array.from(clonedDoc.styleSheets).forEach((sheet) => {
+                  try {
+                    const rules = Array.from(sheet.cssRules);
+                    for (let i = rules.length - 1; i >= 0; i--) {
+                      if (rules[i].cssText.includes('oklch')) {
+                        (sheet as CSSStyleSheet).deleteRule(i);
+                      }
+                    }
+                  } catch (e) {}
+                });
+              } catch (e) {}
             }
           },
           jsPDF: { unit: 'mm' as const, format: 'a4' as const, orientation: 'portrait' as const }
@@ -348,12 +332,6 @@ export default function AdminApprovalPage() {
 
   const classes = Array.from(new Set((Object.values(students) as Student[]).map(s => s.classId))).sort();
 
-  const toggleSection = (id: string) => {
-    setExpandedSections(prev => 
-      prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id]
-    );
-  };
-
   const getScoreForStudent = (student: Student, score?: DRLScore): DRLScore => {
     if (score) return score;
     
@@ -407,25 +385,26 @@ export default function AdminApprovalPage() {
     }
   };
 
-  const filteredItems = (Object.values(students) as Student[]).map(student => {
-    const score = scores.find(s => s.studentId === student.id && s.semester === selectedPeriod);
-    return {
-      student,
-      score,
-      status: score ? score.status : 'not_submitted'
-    };
-  }).filter(item => {
-    const matchesSearch = item.student.id.includes(searchTerm) || 
-                         `${item.student.lastName} ${item.student.firstName}`.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesClass = filterClass === 'all' || item.student.classId === filterClass;
-    return matchesSearch && matchesClass;
-  });
+  const filteredItems = useMemo(() => {
+    return (Object.values(students) as Student[]).map(student => {
+      const score = scores.find(s => s.studentId === student.id && s.semester === selectedPeriod);
+      return {
+        student,
+        score,
+        status: score ? score.status : 'not_submitted'
+      };
+    }).filter(item => {
+      const matchesSearch = item.student.id.includes(searchTerm) || 
+                           `${item.student.lastName} ${item.student.firstName}`.toLowerCase().includes(searchTerm.toLowerCase());
+      const matchesClass = filterClass === 'all' || item.student.classId === filterClass;
+      return matchesSearch && matchesClass;
+    });
+  }, [students, scores, selectedPeriod, searchTerm, filterClass]);
 
-  const handleApproveItem = (critId: string, approve: boolean) => {
+  const handleApproveItem = useCallback((critId: string, approve: boolean) => {
     if (!selectedScore) return;
     const details: DRLDetails = parseDRLDetails(selectedScore.details);
     
-    // Ensure the criterion object exists
     if (!details[critId] || typeof details[critId] !== 'object') {
       details[critId] = { self: 0, class: 0, proofs: [] };
     }
@@ -439,9 +418,9 @@ export default function AdminApprovalPage() {
       details: JSON.stringify(details),
       classScore: classTotal
     });
-  };
+  }, [selectedScore]);
 
-  const handleClassScoreChange = (critId: string, value: number, max: number) => {
+  const handleClassScoreChange = useCallback((critId: string, value: number, max: number) => {
     if (!selectedScore) return;
     const val = Math.min(Math.max(0, value), max);
     const details: DRLDetails = parseDRLDetails(selectedScore.details);
@@ -459,9 +438,9 @@ export default function AdminApprovalPage() {
       details: JSON.stringify(details),
       classScore: classTotal
     });
-  };
+  }, [selectedScore]);
 
-  const handleApproveAll = (mode: 'all' | 'remaining') => {
+  const handleApproveAll = useCallback((mode: 'all' | 'remaining') => {
     if (!selectedScore) return;
 
     const details: DRLDetails = parseDRLDetails(selectedScore.details);
@@ -469,7 +448,6 @@ export default function AdminApprovalPage() {
     EVALUATION_DATA.forEach(section => {
       section.criteria.forEach(crit => {
         const id = crit.id;
-        // Ensure the criterion object exists
         if (!details[id] || typeof details[id] !== 'object') {
           details[id] = { self: 0, class: 0, proofs: [] };
         }
@@ -477,8 +455,6 @@ export default function AdminApprovalPage() {
         if (mode === 'all') {
           details[id].class = Number(details[id].self) || 0;
         } else if (mode === 'remaining') {
-          // "Duyệt mục còn lại thì trừ mục nào đã tích x"
-          // "Tích x" is defined as class === 0 and self !== 0
           const isRejected = Number(details[id].class) === 0 && (Number(details[id].self) || 0) !== 0;
           if (!isRejected) {
             details[id].class = Number(details[id].self) || 0;
@@ -496,7 +472,29 @@ export default function AdminApprovalPage() {
     });
 
     toast.success(mode === 'all' ? 'Đã duyệt tất cả các mục' : 'Đã duyệt các mục còn lại');
-  };
+  }, [selectedScore]);
+
+  const toggleSection = useCallback((id: string) => {
+    setExpandedSections(prev => 
+      prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id]
+    );
+  }, []);
+
+  const handleImageClick = useCallback((urls: string[], index: number) => {
+    setLightbox({
+      isOpen: true,
+      images: urls,
+      index: index
+    });
+  }, []);
+
+  const handleSelectScore = useCallback((student: Student, score?: DRLScore) => {
+    setSelectedScore(getScoreForStudent(student, score));
+  }, [selectedPeriod]);
+
+  const handleDownloadPDF = useCallback((student: Student, score?: DRLScore) => {
+    setPrintingStudent({ student, score: getScoreForStudent(student, score) });
+  }, [selectedPeriod]);
 
   const saveApproval = async () => {
     if (!selectedScore) return;
@@ -628,385 +626,43 @@ export default function AdminApprovalPage() {
     <div className="max-w-full mx-auto p-4 md:p-8 px-4 md:px-12">
       <AnimatePresence mode="wait">
         {!selectedScore ? (
-          <motion.div 
-            key="list"
-            initial={{ opacity: 0, x: -20 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -20 }}
-          >
-            <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
-              <div className="flex items-center gap-4">
-                <h1 className="text-3xl font-bold text-slate-900">Xem phiếu điểm</h1>
-                <button 
-                  onClick={loadData}
-                  disabled={refreshing}
-                  className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-all"
-                  title="Làm mới dữ liệu"
-                >
-                  <RefreshCw size={20} className={refreshing ? 'animate-spin' : ''} />
-                </button>
-              </div>
-              
-              <div className="flex flex-wrap gap-2 w-full md:w-auto">
-                <div className="relative flex-1 min-w-[200px] md:w-64">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                  <input 
-                    type="text" 
-                    placeholder="Tìm MSSV, tên..." 
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                  />
-                </div>
-                <div className="flex items-center gap-2">
-                  <p className="text-xs font-bold text-slate-500 uppercase whitespace-nowrap">Đợt chấm:</p>
-                  <select 
-                    value={selectedPeriod}
-                    onChange={(e) => setSelectedPeriod(e.target.value)}
-                    className="px-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-white font-bold text-blue-600"
-                  >
-                    {periods.length > 0 ? (
-                      periods.map(p => <option key={p.id} value={p.name}>{p.name}</option>)
-                    ) : (
-                      <option value="HK2-2023-2024">HK2-2023-2024</option>
-                    )}
-                  </select>
-                </div>
-                <select 
-                  value={filterClass}
-                  onChange={(e) => setFilterClass(e.target.value)}
-                  className="px-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-white font-medium text-slate-700"
-                >
-                  <option value="all">Tất cả lớp</option>
-                  {classes.map(c => <option key={c} value={c}>{c}</option>)}
-                </select>
-                
-                <div className="flex gap-2">
-                  <button 
-                    onClick={resetFilters}
-                    className="p-2 bg-slate-100 text-slate-600 hover:bg-slate-200 rounded-lg transition-all"
-                    title="Reset bộ lọc"
-                  >
-                    <RotateCcw size={18} />
-                  </button>
-                </div>
-
-                <div className="h-8 w-px bg-slate-200 mx-1 hidden md:block"></div>
-
-                <button 
-                  onClick={exportExcel}
-                  className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-bold rounded-lg transition-all shadow-md shadow-green-100"
-                >
-                  <FileSpreadsheet size={18} />
-                  Xuất Excel
-                </button>
-                <button 
-                  onClick={exportAllPDFs}
-                  disabled={exportingAllPDF}
-                  className="flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white font-bold rounded-lg transition-all shadow-md shadow-slate-200 disabled:opacity-50"
-                >
-                  {exportingAllPDF ? (
-                    <Loader2 size={18} className="animate-spin" />
-                  ) : (
-                    <Download size={18} />
-                  )}
-                  Tải Phiếu (PDF)
-                </button>
-                <button 
-                  onClick={exportZip}
-                  disabled={exportingZip}
-                  className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg transition-all shadow-md shadow-blue-100 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {exportingZip ? (
-                    <>
-                      <Loader2 size={18} className="animate-spin" />
-                      Đang nén ({zipProgress.current}/{zipProgress.total})
-                    </>
-                  ) : (
-                    <>
-                      <FolderArchive size={18} />
-                      Xuất ZIP (Hồ sơ)
-                    </>
-                  )}
-                </button>
-              </div>
-            </div>
-
-            <div className="space-y-4">
-              <div className="flex justify-between items-center px-2">
-                <h2 className="font-bold text-slate-700 uppercase text-xs tracking-wider">Danh sách sinh viên ({filteredItems.length})</h2>
-              </div>
-              <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left">
-                    <thead className="bg-slate-50 text-slate-500 text-[10px] uppercase font-bold tracking-wider">
-                      <tr>
-                        <th className="px-6 py-4">Sinh viên</th>
-                        <th className="px-6 py-4">Lớp</th>
-                        <th className="px-6 py-4">Tự chấm</th>
-                        <th className="px-6 py-4">Lớp chấm</th>
-                        <th className="px-6 py-4 text-right">Thao tác</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {filteredItems.map(item => {
-                        const { student, score } = item;
-                        const uniqueKey = student.id;
-                        return (
-                          <tr key={uniqueKey} className="hover:bg-slate-50 transition-colors">
-                            <td className="px-6 py-4">
-                              <p className="font-bold text-slate-900">{student.lastName} {student.firstName}</p>
-                              <p className="text-xs text-blue-600 font-mono">{student.id}</p>
-                            </td>
-                            <td className="px-6 py-4 text-slate-600 font-medium">{student.classId}</td>
-                            <td className="px-6 py-4 font-bold text-slate-700">
-                              {score ? `${calculateDRLScore(parseDRLDetails(score.details), EVALUATION_DATA, 'self')}đ` : '-'}
-                            </td>
-                            <td className="px-6 py-4 font-bold text-blue-600">
-                              {score ? `${calculateDRLScore(parseDRLDetails(score.details), EVALUATION_DATA, 'class')}đ` : '-'}
-                            </td>
-                            <td className="px-6 py-4 text-right">
-                              <div className="flex justify-end gap-2">
-                                <button 
-                                  onClick={() => setPrintingStudent({ student, score: getScoreForStudent(student, score) })}
-                                  disabled={exportingPDF === student.id}
-                                  className="p-2 bg-slate-100 text-slate-600 hover:bg-slate-800 hover:text-white rounded-lg transition-all disabled:opacity-50"
-                                  title="Tải PDF"
-                                >
-                                  {exportingPDF === student.id ? (
-                                    <Loader2 size={14} className="animate-spin" />
-                                  ) : (
-                                    <Download size={14} />
-                                  )}
-                                </button>
-                                <button 
-                                  onClick={() => setSelectedScore(getScoreForStudent(student, score))}
-                                  className="inline-flex items-center gap-2 px-4 py-2 bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white rounded-lg font-bold text-xs transition-all"
-                                >
-                                  <Eye size={14} /> Xem chi tiết
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-                {filteredItems.length === 0 && (
-                  <div className="p-12 text-center text-slate-400">
-                    <Search size={48} className="mx-auto mb-4 opacity-20" />
-                    <p>Không tìm thấy phiếu điểm nào phù hợp</p>
-                  </div>
-                )}
-              </div>
-            </div>
-          </motion.div>
+          <AdminScoreList 
+            students={students}
+            scores={scores}
+            periods={periods}
+            selectedPeriod={selectedPeriod}
+            onPeriodChange={setSelectedPeriod}
+            searchTerm={searchTerm}
+            onSearchChange={setSearchTerm}
+            filterClass={filterClass}
+            onClassChange={setFilterClass}
+            onRefresh={loadData}
+            refreshing={refreshing}
+            onResetFilters={resetFilters}
+            onExportExcel={exportExcel}
+            onExportAllPDFs={exportAllPDFs}
+            exportingAllPDF={exportingAllPDF}
+            onExportZip={exportZip}
+            exportingZip={exportingZip}
+            zipProgress={zipProgress}
+            onSelectScore={handleSelectScore}
+            onDownloadPDF={handleDownloadPDF}
+            exportingPDF={exportingPDF}
+          />
         ) : (
-          <motion.div 
-            key="detail"
-            initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: 20 }}
-            className="flex flex-col gap-6"
-          >
-            <div className="flex items-center justify-between">
-              <button 
-                onClick={() => setSelectedScore(null)}
-                className="flex items-center gap-2 text-slate-500 hover:text-slate-900 font-bold transition-colors"
-              >
-                <ChevronRight size={20} className="rotate-180" /> Quay lại danh sách
-              </button>
-              <div className="flex gap-2">
-                <button 
-                  onClick={() => handleApproveAll('all')}
-                  className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg transition-all text-xs shadow-md shadow-blue-100"
-                >
-                  <CheckCircle size={14} /> Duyệt tất cả
-                </button>
-                <button 
-                  onClick={() => handleApproveAll('remaining')}
-                  className="flex items-center gap-2 px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-lg transition-all text-xs shadow-md shadow-amber-100"
-                >
-                  <AlertCircle size={14} /> Duyệt mục còn lại
-                </button>
-              </div>
-            </div>
-
-            <div className="space-y-6">
-              <div className="bg-white rounded-xl p-4 border border-slate-200 shadow-sm flex items-center justify-between">
-                <div>
-                  <h2 className="text-xl font-black text-slate-900">
-                    {students[selectedScore.studentId] ? `${students[selectedScore.studentId].lastName} ${students[selectedScore.studentId].firstName}` : selectedScore.studentId}
-                  </h2>
-                  <p className="text-sm text-slate-500 font-medium">MSSV: <span className="text-blue-600 font-bold">{selectedScore.studentId}</span> | Lớp: <span className="text-slate-700 font-bold">{students[selectedScore.studentId]?.classId}</span></p>
-                </div>
-              </div>
-
-              <div className="space-y-4">
-                {EVALUATION_DATA.map(section => {
-                  const details: DRLDetails = parseDRLDetails(selectedScore.details);
-                  const sectionScoreSelf = section.criteria.reduce((sum, crit) => sum + (details[crit.id]?.self || 0), 0);
-                  const sectionScoreClass = section.criteria.reduce((sum, crit) => sum + (details[crit.id]?.class || 0), 0);
-
-                  return (
-                    <div key={section.id} className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
-                      <button 
-                        onClick={() => toggleSection(section.id)}
-                        className="w-full flex items-center justify-between p-3 bg-slate-50 hover:bg-slate-100 transition-colors text-left"
-                      >
-                        <div className="flex items-center gap-3">
-                          <span className="bg-blue-600 text-white w-8 h-8 rounded-lg flex items-center justify-center font-black text-sm shadow-sm">
-                            {section.id.split('-')[1]}
-                          </span>
-                          <h3 className="font-bold text-slate-800 text-base">{section.title}</h3>
-                        </div>
-                        <div className="flex items-center gap-6">
-                          <div className="flex gap-4">
-                            <div className="text-right">
-                              <p className="text-[9px] font-bold text-slate-400 uppercase">Tự chấm</p>
-                              <p className="text-sm font-black text-slate-600">{Math.min(sectionScoreSelf, section.maxPoints)}</p>
-                            </div>
-                            <div className="text-right">
-                              <p className="text-[9px] font-bold text-blue-400 uppercase">Lớp chấm</p>
-                              <p className="text-sm font-black text-blue-600">{Math.min(sectionScoreClass, section.maxPoints)}</p>
-                            </div>
-                          </div>
-                          {expandedSections.includes(section.id) ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
-                        </div>
-                      </button>
-
-                      <AnimatePresence>
-                        {expandedSections.includes(section.id) && (
-                          <motion.div 
-                            initial={{ height: 0 }}
-                            animate={{ height: 'auto' }}
-                            exit={{ height: 0 }}
-                            className="overflow-hidden"
-                          >
-                            <div className="p-3 space-y-3 divide-y divide-slate-100">
-                              {section.criteria.map(crit => (
-                                <div key={crit.id} className="pt-3 first:pt-0">
-                                  <div className="flex flex-col gap-2">
-                                    <div className="flex-1">
-                                      <p className="text-sm font-bold text-slate-900 leading-snug mb-1">{crit.content}</p>
-                                      {details[crit.id]?.proofs?.length > 0 && (
-                                        <div className="flex flex-wrap gap-2 mt-2">
-                                          {details[crit.id].proofs.map((url, idx) => (
-                                            <button 
-                                              key={idx} 
-                                              onClick={() => {
-                                                const formattedUrls = (details[crit.id]?.proofs || []).map(url => formatImageUrl(url));
-                                                setLightbox({
-                                                  isOpen: true,
-                                                  images: formattedUrls,
-                                                  index: idx
-                                                });
-                                              }}
-                                              className="w-10 h-10 rounded-lg border border-slate-200 overflow-hidden hover:ring-2 hover:ring-blue-500 transition-all shadow-sm"
-                                            >
-                                              <img src={formatImageUrl(url)} alt="proof" className="w-full h-full object-cover" />
-                                            </button>
-                                          ))}
-                                        </div>
-                                      )}
-                                    </div>
-                                    <div className="flex items-center gap-3">
-                                      <div className="flex items-center gap-6 bg-blue-50/30 p-2 px-4 rounded-lg border border-blue-100 w-fit">
-                                        <div className="text-center">
-                                          <p className="text-[8px] text-slate-400 uppercase font-black tracking-widest mb-0.5">Tự chấm</p>
-                                          <p className="text-lg font-black text-slate-700">{details[crit.id]?.self || 0}</p>
-                                        </div>
-                                        <div className="text-center">
-                                          <p className="text-[8px] text-blue-400 uppercase font-black tracking-widest mb-0.5">Lớp chấm</p>
-                                          <input 
-                                            type="number"
-                                            value={details[crit.id]?.class || 0}
-                                            onChange={(e) => handleClassScoreChange(crit.id, parseInt(e.target.value) || 0, crit.maxPoints)}
-                                            className="w-12 px-1 py-0.5 border-b border-blue-200 rounded-none text-center focus:border-blue-500 outline-none text-lg font-black text-blue-600 bg-transparent"
-                                          />
-                                        </div>
-                                      </div>
-
-                                      <div className="flex flex-row gap-2">
-                                        <button 
-                                          onClick={() => handleApproveItem(crit.id, true)}
-                                          className={`flex items-center justify-center w-10 h-10 rounded-xl transition-all duration-300 ${
-                                            details[crit.id]?.class === details[crit.id]?.self && details[crit.id]?.self !== 0 
-                                            ? 'bg-green-600 text-white shadow-lg shadow-green-200 scale-105' 
-                                            : 'bg-white text-slate-400 border border-slate-200 hover:border-green-500 hover:text-green-600 hover:bg-green-50'
-                                          }`}
-                                          title="Duyệt mục này"
-                                        >
-                                          <Check size={20} strokeWidth={3} />
-                                        </button>
-                                        <button 
-                                          onClick={() => handleApproveItem(crit.id, false)}
-                                          className={`flex items-center justify-center w-10 h-10 rounded-xl transition-all duration-300 ${
-                                            details[crit.id]?.class === 0 && details[crit.id]?.self !== 0 
-                                            ? 'bg-red-600 text-white shadow-lg shadow-red-200 scale-105' 
-                                            : 'bg-white text-slate-400 border border-slate-200 hover:border-red-500 hover:text-red-600 hover:bg-red-50'
-                                          }`}
-                                          title="Không duyệt mục này"
-                                        >
-                                          <X size={20} strokeWidth={3} />
-                                        </button>
-                                      </div>
-                                    </div>
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          </motion.div>
-                        )}
-                      </AnimatePresence>
-                    </div>
-                  );
-                })}
-              </div>
-
-              <div className="bg-white rounded-xl p-4 border border-slate-200 shadow-lg flex items-center justify-between sticky bottom-4 z-10">
-                <div className="flex gap-8">
-                  <div>
-                    <p className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Tự chấm</p>
-                    <p className="text-xl font-black text-slate-700">
-                      {calculateDRLScore(parseDRLDetails(selectedScore.details), EVALUATION_DATA, 'self')}đ
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Lớp chấm</p>
-                    <p className="text-xl font-black text-blue-600">
-                      {calculateDRLScore(parseDRLDetails(selectedScore.details), EVALUATION_DATA, 'class')}đ
-                    </p>
-                  </div>
-                </div>
-                <div className="flex gap-2">
-                  {selectedScore && students[selectedScore.studentId] && (
-                    <div className="flex gap-2">
-                      <button 
-                        onClick={saveApproval}
-                        className="flex items-center gap-2 px-8 py-2 bg-blue-600 hover:bg-blue-700 text-white font-black rounded-xl transition-all shadow-lg shadow-blue-100 text-sm"
-                      >
-                        <CheckCircle size={18} /> Lưu kết quả duyệt
-                      </button>
-                      <button 
-                        onClick={() => exportDetailedExcel(students[selectedScore.studentId], selectedScore)}
-                        className="flex items-center gap-2 px-6 py-2 bg-green-600 hover:bg-green-700 text-white font-black rounded-xl transition-all shadow-lg shadow-green-100 text-sm"
-                      >
-                        <FileSpreadsheet size={18} /> Xuất Excel
-                      </button>
-                    </div>
-                  )}
-                  <button 
-                    onClick={() => setSelectedScore(null)}
-                    className="px-8 py-2 bg-slate-800 hover:bg-slate-900 text-white font-black rounded-xl transition-all shadow-lg shadow-slate-100 text-sm"
-                  >
-                    Đóng
-                  </button>
-                </div>
-              </div>
-            </div>
-          </motion.div>
+          <AdminScoreDetail 
+            student={students[selectedScore.studentId]}
+            score={selectedScore}
+            onBack={() => setSelectedScore(null)}
+            expandedSections={expandedSections}
+            onToggleSection={toggleSection}
+            onApproveAll={handleApproveAll}
+            onApproveItem={handleApproveItem}
+            onClassScoreChange={handleClassScoreChange}
+            onSave={saveApproval}
+            onExportExcel={() => exportDetailedExcel(students[selectedScore.studentId], selectedScore)}
+            onImageClick={handleImageClick}
+          />
         )}
       </AnimatePresence>
 
@@ -1021,9 +677,10 @@ export default function AdminApprovalPage() {
             </div>
           ))}
         </div>
-        <div ref={singlePrintRef} id="printable-single-container">
+        <div id="printable-single-container">
           {printingStudent && (
             <PrintableScorecard 
+              ref={singlePrintRef}
               student={printingStudent.student} 
               score={printingStudent.score} 
             />

@@ -1,15 +1,17 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { EVALUATION_DATA } from '../constants';
 import { DRLDetails, DRLScore } from '../types';
 import { drlService } from '../services/api';
-import { parseDRLDetails, calculateDRLScore, formatImageUrl } from '../lib/utils';
-import { FileText, Save, Send, ChevronDown, ChevronUp, Upload, Trash2, Eye, Download, Loader2, Maximize2, RefreshCw, FileSpreadsheet } from 'lucide-react';
+import { parseDRLDetails, calculateDRLScore, formatImageUrl, getRank } from '../lib/utils';
+import { FileText, Save, Send, ChevronDown, ChevronUp, Upload, Trash2, Eye, Download, Loader2, Maximize2, RefreshCw, FileSpreadsheet, CheckCircle2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
 import * as XLSX from 'xlsx';
-import { PrintableScorecard } from '../components/PrintableScorecard';
+import { PrintableScorecard, PrintableScorecardRef } from '../components/PrintableScorecard';
 import ImageLightbox from '../components/ImageLightbox';
+import { EvaluationSection } from '../components/EvaluationSection';
+import { EvaluationSummary } from '../components/EvaluationSummary';
 
 export default function EvaluationPage() {
   const { user } = useAuth();
@@ -23,8 +25,10 @@ export default function EvaluationPage() {
   const [uploadingId, setUploadingId] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const [lastSaved, setLastSaved] = useState<Date | null>(null);
   const isInitialLoad = useRef(true);
   const autoSaveTimer = useRef<NodeJS.Timeout | null>(null);
+  const printableRef = useRef<PrintableScorecardRef>(null);
 
   // Lightbox state
   const [lightbox, setLightbox] = useState<{
@@ -43,22 +47,25 @@ export default function EvaluationPage() {
     loadData();
   }, [selectedPeriod]);
 
-  // Auto-save effect
+  // Auto-save effect (Local only)
   useEffect(() => {
-    if (isInitialLoad.current) return;
+    if (isInitialLoad.current || !user) return;
+    
+    const draftKey = `drl_draft_${user.username}_${selectedPeriod}`;
     
     if (autoSaveTimer.current) {
       clearTimeout(autoSaveTimer.current);
     }
 
     autoSaveTimer.current = setTimeout(() => {
-      handleSave('draft');
-    }, 2000); // Auto save after 2 seconds of inactivity
+      localStorage.setItem(draftKey, JSON.stringify(details));
+      console.log('Saved draft to localStorage');
+    }, 1000); // Auto save after 1 second of inactivity
 
     return () => {
       if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
     };
-  }, [details]);
+  }, [details, user, selectedPeriod]);
 
   const loadData = async () => {
     setLoading(true);
@@ -129,6 +136,22 @@ export default function EvaluationPage() {
       }
 
       setDetails(initialDetails);
+
+      // Check for local draft
+      const draftKey = `drl_draft_${user?.username}_${selectedPeriod}`;
+      const localDraft = localStorage.getItem(draftKey);
+      if (localDraft) {
+        try {
+          const parsedDraft = JSON.parse(localDraft);
+          // Only suggest restoring if it's different from what we just loaded
+          if (JSON.stringify(parsedDraft) !== JSON.stringify(initialDetails)) {
+            setDetails(parsedDraft);
+            toast.info('Đã khôi phục bản nháp từ trình duyệt của bạn');
+          }
+        } catch (e) {
+          console.error('Failed to parse local draft', e);
+        }
+      }
       
       // Mark initial load as complete after a short delay to avoid immediate auto-save
       setTimeout(() => {
@@ -141,13 +164,13 @@ export default function EvaluationPage() {
     }
   };
 
-  const toggleSection = (id: string) => {
+  const toggleSection = useCallback((id: string) => {
     setExpandedSections(prev => 
       prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id]
     );
-  };
+  }, []);
 
-  const handleScoreChange = (critId: string, value: number, max: number) => {
+  const handleScoreChange = useCallback((critId: string, value: number, max: number) => {
     const val = Math.min(Math.max(0, value), max);
     setDetails(prev => {
       const currentCrit = (prev[critId] && typeof prev[critId] === 'object') 
@@ -159,10 +182,9 @@ export default function EvaluationPage() {
         [critId]: { ...currentCrit, self: val }
       };
       
-      // Also trigger auto-save via useEffect
       return updatedDetails;
     });
-  };
+  }, []);
 
   const handleSave = async (status: DRLScore['status'] = 'draft', customDetails?: DRLDetails) => {
     const detailsToSave = customDetails || details;
@@ -184,6 +206,13 @@ export default function EvaluationPage() {
       if (savedScore && savedScore.id) {
         setScoreId(savedScore.id);
       }
+      
+      // Clear local draft on successful server save
+      const draftKey = `drl_draft_${user?.username}_${selectedPeriod}`;
+      localStorage.removeItem(draftKey);
+
+      setLastSaved(new Date());
+
       if (!customDetails) {
         toast.success(status === 'submitted' ? 'Đã gửi phiếu điểm thành công' : 'Đã lưu bản nháp');
       }
@@ -196,188 +225,152 @@ export default function EvaluationPage() {
     }
   };
 
-  const handleFileUpload = async (critId: string, files: FileList | null) => {
+  const handleFileUpload = useCallback(async (critId: string, files: FileList | null) => {
     if (!files || files.length === 0) return;
-    if ((details[critId]?.proofs?.length || 0) + files.length > 10) {
-      toast.error('Tối đa 10 ảnh minh chứng cho mỗi mục');
-      return;
-    }
-
-    setUploadingId(critId);
-    try {
-      const uploadedUrls: string[] = [];
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i];
-        const extension = file.name.split('.').pop() || 'jpg';
-        const reader = new FileReader();
-        const base64Promise = new Promise<string>((resolve) => {
-          reader.onload = () => resolve(reader.result as string);
-          reader.readAsDataURL(file);
-        });
-        const base64 = await base64Promise;
-        
-        // Naming convention: mssv_mục nào_số ram dom (ví dụ CNCD2511016_I-1_56526521258)
-        const sectionMap: Record<string, string> = { 'sec-1': 'I', 'sec-2': 'II', 'sec-3': 'III', 'sec-4': 'IV', 'sec-5': 'V' };
-        const sectionId = EVALUATION_DATA.find(s => s.criteria.some(c => c.id === critId))?.id || '';
-        const sectionLabel = sectionMap[sectionId] || 'X';
-        const critIndex = critId.split('.')[1];
-        const randomNum = Math.floor(Math.random() * 10000000000);
-        const fileName = `${user?.username}_${sectionLabel}-${critIndex}_${randomNum}.${extension}`;
-        
-        const res = await drlService.uploadProof(fileName, base64, user?.username || '', critId, selectedPeriod, sectionLabel, sectionId, user?.mssv);
-        if (res.success && (res.url_anh || res.url)) {
-          uploadedUrls.push(res.url_anh || res.url);
-        }
+    
+    // We need the current details to check proof length
+    setDetails(currentDetails => {
+      if ((currentDetails[critId]?.proofs?.length || 0) + files.length > 10) {
+        toast.error('Tối đa 10 ảnh minh chứng cho mỗi mục');
+        return currentDetails;
       }
-      
-      const currentCrit = (details[critId] && typeof details[critId] === 'object') 
-        ? details[critId] 
-        : { self: 0, class: 0, proofs: [] };
-        
-      const updatedDetails = {
-        ...details,
-        [critId]: { 
-          ...currentCrit, 
-          proofs: [...(currentCrit.proofs || []), ...uploadedUrls] 
+
+      // Start the upload process
+      (async () => {
+        setUploadingId(critId);
+        try {
+          const uploadedUrls: string[] = [];
+          for (let i = 0; i < files.length; i++) {
+            const file = files[i];
+            const extension = file.name.split('.').pop() || 'jpg';
+            const reader = new FileReader();
+            const base64Promise = new Promise<string>((resolve) => {
+              reader.onload = () => resolve(reader.result as string);
+              reader.readAsDataURL(file);
+            });
+            const base64 = await base64Promise;
+            
+            const sectionMap: Record<string, string> = { 'sec-1': 'I', 'sec-2': 'II', 'sec-3': 'III', 'sec-4': 'IV', 'sec-5': 'V' };
+            const sectionId = EVALUATION_DATA.find(s => s.criteria.some(c => c.id === critId))?.id || '';
+            const sectionLabel = sectionMap[sectionId] || 'X';
+            const critIndex = critId.split('.')[1];
+            const randomNum = Math.floor(Math.random() * 10000000000);
+            const fileName = `${user?.username}_${sectionLabel}-${critIndex}_${randomNum}.${extension}`;
+            
+            const res = await drlService.uploadProof(fileName, base64, user?.username || '', critId, selectedPeriod, sectionLabel, sectionId, user?.mssv);
+            if (res.success && (res.url_anh || res.url)) {
+              uploadedUrls.push(res.url_anh || res.url);
+            }
+          }
+          
+          setDetails(prev => {
+            const currentCrit = (prev[critId] && typeof prev[critId] === 'object') 
+              ? prev[critId] 
+              : { self: 0, class: 0, proofs: [] };
+              
+            const updatedDetails = {
+              ...prev,
+              [critId]: { 
+                ...currentCrit, 
+                proofs: [...(currentCrit.proofs || []), ...uploadedUrls] 
+              }
+            };
+            
+            // Immediate save for proof changes
+            handleSave('draft', updatedDetails);
+            return updatedDetails;
+          });
+        } catch (err) {
+          toast.error('Upload thất bại');
+        } finally {
+          setUploadingId(null);
         }
-      };
-      
-      setDetails(updatedDetails);
-      
-      // Immediate save for proof changes
-      await handleSave('draft', updatedDetails);
-    } catch (err) {
-      toast.error('Upload thất bại');
-    } finally {
-      setUploadingId(null);
-    }
-  };
+      })();
 
-  const removeProof = async (critId: string, index: number) => {
-    const proofUrl = details[critId]?.proofs[index];
-    if (!proofUrl) return;
+      return currentDetails;
+    });
+  }, [user, selectedPeriod]);
 
-    // Extract filename and path from URL
-    let fileName = '';
-    let fullPath = '';
-    try {
-      // If it's a proxy URL, extract the path after /api-proxy/
-      if (proofUrl.includes('/api-proxy/')) {
-        fullPath = proofUrl.split('/api-proxy/')[1].split('?')[0];
-        fileName = fullPath.split('/').pop() || '';
-      } else if (proofUrl.includes('path=')) {
-        const urlParts = proofUrl.split('path=');
-        const pathValue = urlParts[1].split('&')[0];
-        fullPath = pathValue;
-        fileName = pathValue.split('/').pop() || '';
-      } else {
+  const removeProof = useCallback(async (critId: string, index: number) => {
+    setDetails(currentDetails => {
+      const proofUrl = currentDetails[critId]?.proofs[index];
+      if (!proofUrl) return currentDetails;
+
+      // Extract filename and path from URL
+      let fileName = '';
+      let fullPath = '';
+      try {
+        if (proofUrl.includes('/api-proxy/')) {
+          fullPath = proofUrl.split('/api-proxy/')[1].split('?')[0];
+          fileName = fullPath.split('/').pop() || '';
+        } else if (proofUrl.includes('path=')) {
+          const urlParts = proofUrl.split('path=');
+          const pathValue = urlParts[1].split('&')[0];
+          fullPath = pathValue;
+          fileName = pathValue.split('/').pop() || '';
+        } else {
+          fileName = proofUrl.split('/').pop()?.split('?')[0] || '';
+          fullPath = fileName;
+        }
+      } catch (e) {
         fileName = proofUrl.split('/').pop()?.split('?')[0] || '';
         fullPath = fileName;
       }
-      
-      // If fullPath is just the filename, try to prepend 'uploads/' if it's a common pattern
-      if (!fullPath.includes('/') && fileName) {
-        // Many backends store files in an 'uploads' directory
-        // We'll send both the filename and a guessed path
-      }
-    } catch (e) {
-      fileName = proofUrl.split('/').pop()?.split('?')[0] || '';
-      fullPath = fileName;
-    }
 
-    const currentCrit = (details[critId] && typeof details[critId] === 'object') 
-      ? details[critId] 
-      : { self: 0, class: 0, proofs: [] };
-      
-    const newProofs = [...currentCrit.proofs];
-    newProofs.splice(index, 1);
-    
-    const updatedDetails = {
-      ...details,
-      [critId]: { ...currentCrit, proofs: newProofs }
-    };
-    
-    setDetails(updatedDetails);
-    
-    try {
-      // 1. Update the score record first
-      await handleSave('draft', updatedDetails);
-      
-      // 2. Then delete from server
-      try {
-        const sectionMap: Record<string, string> = { 'sec-1': 'I', 'sec-2': 'II', 'sec-3': 'III', 'sec-4': 'IV', 'sec-5': 'V' };
-        const sectionId = EVALUATION_DATA.find(s => s.criteria.some(c => c.id === critId))?.id || '';
-        const sectionLabel = sectionMap[sectionId] || 'X';
+      const currentCrit = (currentDetails[critId] && typeof currentDetails[critId] === 'object') 
+        ? currentDetails[critId] 
+        : { self: 0, class: 0, proofs: [] };
         
-        await drlService.deleteProof(fileName, user?.username || '', critId, selectedPeriod, fullPath, scoreId || '', sectionLabel, sectionId, user?.mssv);
-      } catch (deleteErr: any) {
-        console.error('Failed to delete proof from server', deleteErr);
-        // If save succeeded but delete failed, we don't want to show the generic error
-        // that suggests the whole operation failed.
-        toast.error(`Lỗi xóa file trên máy chủ: ${deleteErr.message || 'Vui lòng thử lại.'}`);
-      }
-    } catch (saveErr: any) {
-      console.error('Failed to save score record during deletion', saveErr);
-      // handleSave already showed a toast for save failure
-      // Revert local state to keep it in sync with server
-      loadData();
-    }
-  };
+      const newProofs = [...currentCrit.proofs];
+      newProofs.splice(index, 1);
+      
+      const updatedDetails = {
+        ...currentDetails,
+        [critId]: { ...currentCrit, proofs: newProofs }
+      };
+      
+      // Start the removal process
+      (async () => {
+        try {
+          await handleSave('draft', updatedDetails);
+          const sectionMap: Record<string, string> = { 'sec-1': 'I', 'sec-2': 'II', 'sec-3': 'III', 'sec-4': 'IV', 'sec-5': 'V' };
+          const sectionId = EVALUATION_DATA.find(s => s.criteria.some(c => c.id === critId))?.id || '';
+          const sectionLabel = sectionMap[sectionId] || 'X';
+          await drlService.deleteProof(fileName, user?.username || '', critId, selectedPeriod, fullPath, scoreId || '', sectionLabel, sectionId, user?.mssv);
+        } catch (err) {
+          console.error('Failed to remove proof', err);
+        }
+      })();
 
-  const printRef = useRef<HTMLDivElement>(null);
+      return updatedDetails;
+    });
+  }, [user, selectedPeriod, scoreId]);
 
-  const calculateSectionScore = (sectionId: string) => {
-    const section = EVALUATION_DATA.find(s => s.id === sectionId);
-    if (!section) return 0;
-    return calculateDRLScore(details, [section], 'self');
-  };
+  const totalScore = useMemo(() => calculateDRLScore(details, EVALUATION_DATA, 'self'), [details]);
+  
+  const sectionScores = useMemo(() => {
+    const scores: Record<string, number> = {};
+    EVALUATION_DATA.forEach(section => {
+      scores[section.id] = calculateDRLScore(details, [section], 'self');
+    });
+    return scores;
+  }, [details]);
 
-  const calculateTotalScore = (customDetails?: DRLDetails) => {
-    return calculateDRLScore(customDetails || details, EVALUATION_DATA, 'self');
-  };
+  const handleImageClick = useCallback((images: string[], index: number, critId: string) => {
+    setLightbox({ 
+      isOpen: true, 
+      images, 
+      index, 
+      critId 
+    });
+  }, []);
 
   const exportPDF = async () => {
-    const element = document.getElementById('printable-scorecard');
-    if (!element) return;
+    if (!printableRef.current) return;
     
     setExporting(true);
-    const opt = {
-      margin: 10,
-      filename: `PhieuDiemRL_${user?.username}.pdf`,
-      image: { type: 'jpeg' as const, quality: 0.98 },
-      html2canvas: { 
-        scale: 2, 
-        useCORS: true,
-        letterRendering: true,
-        scrollX: 0,
-        scrollY: 0,
-        onclone: (clonedDoc: Document) => {
-          const el = clonedDoc.getElementById('printable-scorecard-container');
-          if (el) {
-            el.style.opacity = '1';
-            el.style.position = 'static';
-            el.style.left = '0';
-          }
-
-          Array.from(clonedDoc.styleSheets).forEach((sheet) => {
-            try {
-              const rules = Array.from(sheet.cssRules);
-              for (let i = rules.length - 1; i >= 0; i--) {
-                if (rules[i].cssText.includes('oklch')) {
-                  sheet.deleteRule(i);
-                }
-              }
-            } catch (e) {}
-          });
-        }
-      },
-      jsPDF: { unit: 'mm' as const, format: 'a4' as const, orientation: 'portrait' as const }
-    };
-
     try {
-      // @ts-ignore
-      const html2pdf = (await import('html2pdf.js')).default;
-      await html2pdf().set(opt).from(element).save();
+      await printableRef.current.downloadPDF();
       toast.success('Đã tải xuống file PDF');
     } catch (err) {
       console.error('Failed to export PDF', err);
@@ -425,7 +418,7 @@ export default function EvaluationPage() {
         // Add section total
         excelData.push({
           'Tên mục': `Cộng mục ${section.id.split('-')[1]}`,
-          'Tự chấm': calculateSectionScore(section.id),
+          'Tự chấm': calculateDRLScore(details, [section], 'self'),
           'Lớp chấm': calculateDRLScore(details, [section], 'class')
         });
         
@@ -436,7 +429,7 @@ export default function EvaluationPage() {
       // Add total score
       excelData.push({
         'Tên mục': 'TỔNG ĐIỂM RÈN LUYỆN',
-        'Tự chấm': calculateTotalScore(),
+        'Tự chấm': calculateDRLScore(details, EVALUATION_DATA, 'self'),
         'Lớp chấm': calculateDRLScore(details, EVALUATION_DATA, 'class')
       });
 
@@ -463,60 +456,73 @@ export default function EvaluationPage() {
   if (loading) return <div className="p-8 text-center">Đang tải dữ liệu...</div>;
 
   return (
-    <div className="max-w-full mx-auto p-4 md:p-8 pb-24 px-4 md:px-12">
-      <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
-        <div>
-          <h1 className="text-3xl font-bold text-slate-900">Phiếu điểm rèn luyện</h1>
-          <div className="flex items-center gap-3 mt-2">
-            <p className="text-sm font-bold text-slate-500 uppercase tracking-wider">Đợt chấm:</p>
-            <select 
-              value={selectedPeriod}
-              onChange={(e) => setSelectedPeriod(e.target.value)}
-              className="px-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-white font-bold text-blue-600 shadow-sm transition-all hover:border-blue-300"
-            >
-              {periods.length > 0 ? (
-                periods.map(p => (
-                  <option key={p.id} value={p.name}>{p.name}</option>
-                ))
-              ) : (
-                <option value="HK2-2023-2024">Học kỳ 2 - Năm học 2023-2024</option>
-              )}
-            </select>
+    <div className="max-w-7xl mx-auto p-4 md:p-8 pb-32">
+      <div className="flex flex-col lg:flex-row lg:items-end justify-between mb-10 gap-6">
+        <div className="space-y-2">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-blue-600 rounded-lg text-white">
+              <FileText size={24} />
+            </div>
+            <h1 className="text-3xl font-black text-slate-900 tracking-tight">Phiếu điểm rèn luyện</h1>
+          </div>
+          <div className="flex flex-wrap items-center gap-4">
+            <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-full border border-slate-200 shadow-sm">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Học kỳ:</span>
+              <select 
+                value={selectedPeriod}
+                onChange={(e) => setSelectedPeriod(e.target.value)}
+                className="bg-transparent font-bold text-blue-600 outline-none text-sm cursor-pointer"
+              >
+                {periods.length > 0 ? (
+                  periods.map(p => (
+                    <option key={p.id} value={p.name}>{p.name}</option>
+                  ))
+                ) : (
+                  <option value="HK2-2023-2024">Học kỳ 2 - Năm học 2023-2024</option>
+                )}
+              </select>
+            </div>
+            {lastSaved && (
+              <div className="flex items-center gap-1.5 text-emerald-600 text-[10px] font-bold uppercase tracking-wide">
+                <CheckCircle2 size={12} />
+                Đã lưu lúc {lastSaved.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              </div>
+            )}
           </div>
         </div>
-        <div className="flex gap-2 items-center">
-          {saving && (
-            <div className="flex items-center gap-2 text-blue-600 text-xs font-bold animate-pulse mr-2">
-              <Loader2 className="animate-spin" size={14} />
-              Đang lưu...
-            </div>
-          )}
+
+        <div className="flex flex-wrap gap-3 items-center">
           <button 
             onClick={loadData}
-            className="p-2 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+            className="p-2.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-all active:scale-95"
             title="Tải lại dữ liệu"
           >
-            <RefreshCw size={18} className={loading ? "animate-spin" : ""} />
+            <RefreshCw size={20} className={loading ? "animate-spin" : ""} />
           </button>
+          
+          <div className="h-8 w-px bg-slate-200 mx-1 hidden sm:block"></div>
+
           <button 
             onClick={() => setIsPreviewOpen(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition-colors"
+            className="flex items-center gap-2 px-5 py-2.5 bg-white hover:bg-slate-50 text-slate-700 font-bold rounded-xl border border-slate-200 shadow-sm transition-all active:scale-95"
           >
-            <Eye size={18} />
+            <Eye size={18} className="text-blue-500" />
             Xem phiếu
           </button>
+          
           <button 
             onClick={exportExcel}
             disabled={exporting}
-            className="flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition-colors disabled:opacity-50"
+            className="flex items-center gap-2 px-5 py-2.5 bg-white hover:bg-slate-50 text-slate-700 font-bold rounded-xl border border-slate-200 shadow-sm transition-all active:scale-95 disabled:opacity-50"
           >
-            {exporting ? <Loader2 className="animate-spin" size={18} /> : <FileSpreadsheet size={18} />}
+            {exporting ? <Loader2 className="animate-spin" size={18} /> : <FileSpreadsheet size={18} className="text-emerald-500" />}
             Xuất Excel
           </button>
+          
           <button 
             onClick={() => handleSave('draft')}
             disabled={saving}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-lg transition-colors"
+            className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white font-bold rounded-xl shadow-lg shadow-blue-100 hover:bg-blue-700 transition-all active:scale-95 disabled:opacity-50"
           >
             <Save size={18} />
             Lưu nháp
@@ -524,154 +530,34 @@ export default function EvaluationPage() {
         </div>
       </div>
 
-      <div className="space-y-4">
+      <div className="space-y-6">
         {EVALUATION_DATA.map((section) => (
-          <div key={section.id} className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-            <button 
-              onClick={() => toggleSection(section.id)}
-              className="w-full flex items-center justify-between p-3 bg-slate-50 hover:bg-slate-100 transition-colors text-left"
-            >
-              <div className="flex items-center gap-3">
-                <span className="bg-blue-600 text-white w-7 h-7 rounded-full flex items-center justify-center font-bold text-xs">
-                  {section.id.split('-')[1]}
-                </span>
-                <h2 className="font-bold text-slate-800 text-sm">{section.title}</h2>
-              </div>
-              <div className="flex items-center gap-4">
-                <span className="text-xs font-medium text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full">
-                  {calculateSectionScore(section.id)} / {section.maxPoints}
-                </span>
-                {expandedSections.includes(section.id) ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
-              </div>
-            </button>
-
-            <AnimatePresence>
-              {expandedSections.includes(section.id) && (
-                <motion.div 
-                  initial={{ height: 0 }}
-                  animate={{ height: 'auto' }}
-                  exit={{ height: 0 }}
-                  className="overflow-hidden"
-                >
-                  <div className="p-3 space-y-3 divide-y divide-slate-100">
-                    {section.criteria.map((crit) => (
-                      <div key={crit.id} className="pt-3 first:pt-0">
-                        <div className="flex flex-col gap-2">
-                          <div className="flex-1">
-                            <p className="text-slate-800 font-bold text-xs mb-1">{crit.content}</p>
-                            <p className="text-[10px] text-slate-500 whitespace-pre-line bg-slate-50 p-2 rounded border border-slate-100 leading-relaxed">{crit.guide}</p>
-                          </div>
-                          <div className="flex flex-row items-center gap-4 bg-slate-50/50 p-2 px-3 rounded-lg border border-slate-100 w-fit">
-                            <div className="flex items-center gap-3">
-                              <div className="flex flex-col">
-                                <span className="text-[8px] text-slate-400 uppercase font-bold">Tự chấm</span>
-                                <input 
-                                  type="number"
-                                  value={details[crit.id]?.self || 0}
-                                  onChange={(e) => handleScoreChange(crit.id, parseInt(e.target.value) || 0, crit.maxPoints)}
-                                  className="w-12 px-1 py-0.5 border-b border-slate-200 rounded-none text-center focus:border-blue-500 outline-none text-sm font-bold bg-transparent"
-                                />
-                              </div>
-                              <div className="flex flex-col">
-                                <span className="text-[8px] text-slate-400 uppercase font-bold">Lớp chấm</span>
-                                <div className="w-12 py-0.5 text-center text-slate-600 font-bold text-sm">
-                                  {details[crit.id]?.class || 0}
-                                </div>
-                              </div>
-                            </div>
-                            
-                            <div className="h-6 w-px bg-slate-200"></div>
-
-                            <div className="flex items-center gap-2">
-                              <label className="flex items-center justify-center gap-1.5 px-2 py-1 bg-white border border-slate-200 rounded-md hover:border-blue-400 hover:bg-blue-50 cursor-pointer transition-all text-slate-500 hover:text-blue-600 shadow-sm">
-                                <Upload size={12} />
-                                <span className="text-[9px] font-bold uppercase">
-                                  {uploadingId === crit.id ? '...' : 'Minh chứng'}
-                                </span>
-                                <input 
-                                  type="file" 
-                                  multiple 
-                                  accept="image/*" 
-                                  className="hidden" 
-                                  onChange={(e) => handleFileUpload(crit.id, e.target.files)}
-                                  disabled={uploadingId !== null}
-                                />
-                              </label>
-                              
-                              {details[crit.id]?.proofs?.length > 0 && (
-                                <div className="flex flex-wrap gap-1">
-                                  {details[crit.id].proofs.map((url, idx) => (
-                                    <div key={idx} className="relative group w-8 h-8 rounded overflow-hidden border border-slate-200 shadow-sm">
-                                      <img 
-                                        src={formatImageUrl(url)} 
-                                        alt="proof" 
-                                        className="w-full h-full object-cover cursor-pointer" 
-                                        onClick={() => {
-                                          const formattedUrls = (details[crit.id]?.proofs || []).map(u => formatImageUrl(u));
-                                          setLightbox({ 
-                                            isOpen: true, 
-                                            images: formattedUrls, 
-                                            index: idx, 
-                                            critId: crit.id 
-                                          });
-                                        }} 
-                                      />
-                                      <button 
-                                        onClick={() => removeProof(crit.id, idx)} 
-                                        className="absolute top-0 right-0 p-0.5 bg-red-500 text-white opacity-0 group-hover:opacity-100 transition-opacity rounded-bl"
-                                        title="Xóa"
-                                      >
-                                        <Trash2 size={8} />
-                                      </button>
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
+          <EvaluationSection 
+            key={section.id}
+            section={section}
+            details={details}
+            isExpanded={expandedSections.includes(section.id)}
+            onToggle={toggleSection}
+            sectionScore={sectionScores[section.id]}
+            uploadingId={uploadingId}
+            onScoreChange={handleScoreChange}
+            onFileUpload={handleFileUpload}
+            onRemoveProof={removeProof}
+            onImageClick={handleImageClick}
+          />
         ))}
       </div>
 
-      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 p-4 shadow-2xl z-50">
-        <div className="max-w-full mx-auto flex items-center justify-between px-4 md:px-12">
-          <div className="flex items-center gap-4">
-            <div className="hidden md:block">
-              <p className="text-xs text-slate-500 uppercase font-bold tracking-wider">Tổng điểm dự kiến</p>
-              <p className="text-2xl font-black text-blue-600">{calculateTotalScore()} / 100</p>
-            </div>
-            <div className="h-10 w-px bg-slate-200 hidden md:block"></div>
-            <div>
-              <p className="text-xs text-slate-500 uppercase font-bold tracking-wider">Xếp loại</p>
-              <p className="text-lg font-bold text-slate-700">
-                {calculateTotalScore() >= 90 ? 'Xuất sắc' : 
-                 calculateTotalScore() >= 80 ? 'Giỏi' : 
-                 calculateTotalScore() >= 65 ? 'Khá' : 
-                 calculateTotalScore() >= 50 ? 'Trung bình' : 'Yếu'}
-              </p>
-            </div>
-          </div>
-          <button 
-            onClick={() => handleSave('submitted')}
-            disabled={saving}
-            className="flex items-center gap-2 px-8 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl transition-all shadow-lg shadow-blue-200"
-          >
-            <Send size={20} />
-            Nộp phiếu điểm
-          </button>
-        </div>
-      </div>
+      <EvaluationSummary 
+        totalScore={totalScore}
+        saving={saving}
+        onSave={handleSave}
+      />
       <div className="absolute top-0 left-0 opacity-0 pointer-events-none z-[-1]" style={{ width: '210mm' }} id="printable-scorecard-container">
         <div id="printable-scorecard">
           {user && (
             <PrintableScorecard 
+              ref={printableRef}
               student={{
                 id: user.username,
                 username: user.username,
@@ -685,7 +571,7 @@ export default function EvaluationPage() {
                 id: 'current',
                 studentId: user.username,
                 semester: 'II-2023-2024',
-                selfScore: calculateTotalScore(),
+                selfScore: calculateDRLScore(details, EVALUATION_DATA, 'self'),
                 classScore: 0,
                 bchScore: 0,
                 finalScore: 0,
@@ -736,6 +622,7 @@ export default function EvaluationPage() {
               <div className="bg-white shadow-lg p-8 w-[210mm] min-h-[297mm]">
                 {user && (
                   <PrintableScorecard 
+                    ref={printableRef}
                     student={{
                       id: user.username,
                       username: user.username,
@@ -749,7 +636,7 @@ export default function EvaluationPage() {
                       id: 'current',
                       studentId: user.username,
                       semester: selectedPeriod,
-                      selfScore: calculateTotalScore(),
+                      selfScore: calculateDRLScore(details, EVALUATION_DATA, 'self'),
                       classScore: 0,
                       bchScore: 0,
                       finalScore: 0,
