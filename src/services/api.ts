@@ -365,6 +365,15 @@ export const drlService = {
       body: { id },
     });
   },
+
+  getTrangThaiSummary: async (semester?: string) => {
+    const q = semester ? `?semester=${encodeURIComponent(semester)}` : '';
+    return apiFetch(`/trang_thai/summary${q}`);
+  },
+
+  getTrangThaiByClass: async (semester: string) => {
+    return apiFetch(`/trang_thai/by_class?semester=${encodeURIComponent(semester)}`);
+  },
 };
 
 export const adminService = {

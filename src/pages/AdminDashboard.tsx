@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { adminService, classService, drlService } from '../services/api';
+import { adminService, classService, drlService, studentService } from '../services/api';
 import { Users, FileCheck, Calendar, BarChart3, Clock, CheckCircle2, AlertCircle } from 'lucide-react';
 import { motion } from 'motion/react';
 
@@ -10,30 +10,61 @@ export default function AdminDashboard() {
   const [classes, setClasses] = useState<any[]>([]);
   const [scores, setScores] = useState<any[]>([]);
   const [periods, setPeriods] = useState<any[]>([]);
-  const [selectedPeriod, setSelectedPeriod] = useState<string>('HK2-2023-2024');
+  const [selectedPeriod, setSelectedPeriod] = useState<string>('');
+  const [totalStudents, setTotalStudents] = useState<number>(0);
+  const [submittedCount, setSubmittedCount] = useState<number>(0);
+  const [completedCount, setCompletedCount] = useState<number>(0);
+  const [classStats, setClassStats] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     loadData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedPeriod]);
 
   const loadData = async () => {
     try {
-      const [statsRes, classesRes, scoresRes, periodsRes] = await Promise.all([
+      const [statsRes, classesRes, scoresRes, periodsRes, studentsRes] = await Promise.all([
         adminService.getStats(adminToken || ''),
         classService.getAll(),
         drlService.getScores(),
-        drlService.getPeriods()
+        drlService.getPeriods(),
+        studentService.getAll()
       ]);
       setStats(statsRes.data);
       setClasses(classesRes);
-      setScores(scoresRes.filter((s: any) => s.semester === selectedPeriod));
+      setTotalStudents(Array.isArray(studentsRes) ? studentsRes.length : 0);
+
+      // Ensure selectedPeriod uses grading_periods.id
       setPeriods(periodsRes);
-      
-      if (periodsRes.length > 0 && !periodsRes.find((p: any) => p.name === selectedPeriod)) {
-        if (selectedPeriod === 'HK2-2023-2024' && periodsRes[0].name !== 'HK2-2023-2024') {
-          setSelectedPeriod(periodsRes[0].name);
+
+      if (!selectedPeriod) {
+        if (periodsRes.length > 0) setSelectedPeriod(periodsRes[0].id);
+      }
+
+      const effectivePeriod = selectedPeriod || (periodsRes.length > 0 ? periodsRes[0].id : '');
+
+      // Keep scores list (used for recent activities) filtered by period id
+      setScores(scoresRes.filter((s: any) => s.semester === effectivePeriod));
+
+      // Real dashboard statistics from DB (trang_thai)
+      if (effectivePeriod) {
+        // Summary is critical; class breakdown is optional (do not fail whole dashboard)
+        const summaryRes = await drlService.getTrangThaiSummary(effectivePeriod);
+        setSubmittedCount(Number((summaryRes as any)?.daNop) || 0);
+        setCompletedCount(Number((summaryRes as any)?.daHoanTat) || 0);
+
+        try {
+          const byClassRes = await drlService.getTrangThaiByClass(effectivePeriod);
+          setClassStats(Array.isArray(byClassRes) ? byClassRes : []);
+        } catch (e) {
+          console.warn('[AdminDashboard] Failed to load /trang_thai/by_class:', e);
+          setClassStats([]);
         }
+      } else {
+        setSubmittedCount(0);
+        setCompletedCount(0);
+        setClassStats([]);
       }
     } catch (err) {
       console.error('Failed to load admin dashboard', err);
@@ -44,10 +75,8 @@ export default function AdminDashboard() {
 
   if (loading) return <div className="p-8 text-center">Đang tải dữ liệu...</div>;
 
-  const currentPeriod = periods.find(p => p.name === selectedPeriod) || (periods.length > 0 ? periods[0] : null);
-  const totalStudents = stats?.totalUsers || 0;
-  const submittedCount = scores.filter(s => s.status !== 'draft').length;
-  const pendingCount = totalStudents - submittedCount;
+  const currentPeriod = periods.find(p => p.id === selectedPeriod) || (periods.length > 0 ? periods[0] : null);
+  const pendingCount = Math.max(0, (totalStudents || 0) - (submittedCount || 0));
 
   return (
     <div className="max-w-full mx-auto p-4 md:p-8 px-4 md:px-12">
@@ -61,9 +90,9 @@ export default function AdminDashboard() {
             className="px-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-white font-bold text-blue-600 shadow-sm"
           >
             {periods.length > 0 ? (
-              periods.map(p => <option key={p.id} value={p.name}>{p.name}</option>)
+              periods.map(p => <option key={p.id} value={p.id}>{p.name}</option>)
             ) : (
-              <option value="HK2-2023-2024">HK2-2023-2024</option>
+              <option value="">Chưa thiết lập</option>
             )}
           </select>
         </div>
@@ -80,6 +109,12 @@ export default function AdminDashboard() {
           icon={<FileCheck className="text-green-600" />} 
           label="Đã nộp phiếu" 
           value={submittedCount} 
+          color="bg-green-50" 
+        />
+        <StatCard 
+          icon={<CheckCircle2 className="text-emerald-600" />} 
+          label="Đã hoàn tất" 
+          value={completedCount} 
           color="bg-green-50" 
         />
         <StatCard 
@@ -129,16 +164,18 @@ export default function AdminDashboard() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
-                  {classes.slice(0, 5).map(cls => {
-                    const classScores = scores.filter(s => s.status !== 'draft'); // This would need student mapping in real app
+                  {classStats.slice(0, 5).map((row: any) => {
+                    const total = Number(row.totalStudents) || 0;
+                    const submitted = Number(row.submittedCount) || 0;
+                    const rate = total > 0 ? Math.round((submitted / total) * 100) : 0;
                     return (
-                      <tr key={cls.id} className="text-slate-700">
-                        <td className="py-3 font-medium">{cls.name}</td>
-                        <td className="py-3">45</td>
-                        <td className="py-3">32</td>
+                      <tr key={row.classId} className="text-slate-700">
+                        <td className="py-3 font-medium">{row.className || row.classId}</td>
+                        <td className="py-3">{total}</td>
+                        <td className="py-3">{submitted}</td>
                         <td className="py-3">
                           <div className="w-24 h-2 bg-slate-100 rounded-full overflow-hidden">
-                            <div className="h-full bg-blue-500" style={{ width: '71%' }}></div>
+                            <div className="h-full bg-blue-500" style={{ width: `${rate}%` }}></div>
                           </div>
                         </td>
                       </tr>
