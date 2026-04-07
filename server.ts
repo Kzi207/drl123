@@ -15,7 +15,7 @@ async function startServer() {
 
   app.use(express.json({ limit: "50mb" }));
 
-  const API_BASE = process.env.API_BASE || "/api-proxy";
+  const API_BASE = process.env.API_BASE || "https://database.kzii.site";
   const API_KEY = process.env.API_KEY || ""; 
 
   // Proxy API requests
