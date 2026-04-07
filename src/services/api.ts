@@ -3,8 +3,8 @@ import { User, Student, ClassGroup, GradingPeriod, DRLScore } from '../types';
 
 // Priority: 1. Environment variable VITE_API_BASE (from .env)
 //           2. Fallback to /api-proxy for development
-const API_BASE = import.meta.env.VITE_API_BASE || '/api-proxy';
-const API_KEY = import.meta.env.VITE_API_KEY || '';
+const API_BASE = import.meta.env.VITE_API_BASE || 'https://database.kzii.site/';
+const API_KEY = import.meta.env.VITE_API_KEY || 'kzi207-khoaktck-cncd2511';
 
 // Log configuration on startup
 if (typeof window !== 'undefined') {
