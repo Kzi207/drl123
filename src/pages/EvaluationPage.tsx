@@ -16,6 +16,7 @@ import { EvaluationSummary } from '../components/EvaluationSummary';
 export default function EvaluationPage() {
   const { user } = useAuth();
   const [details, setDetails] = useState<DRLDetails>({});
+  const detailsRef = useRef<DRLDetails>({});
   const [scoreId, setScoreId] = useState<string | null>(null);
   const [periods, setPeriods] = useState<any[]>([]);
   const [selectedPeriod, setSelectedPeriod] = useState<string>('HK2-2023-2024');
@@ -29,6 +30,11 @@ export default function EvaluationPage() {
   const isInitialLoad = useRef(true);
   const autoSaveTimer = useRef<NodeJS.Timeout | null>(null);
   const printableRef = useRef<PrintableScorecardRef>(null);
+  const lastUploadTime = useRef<number>(0);  // Track last upload time to prevent duplicates
+
+  useEffect(() => {
+    detailsRef.current = details;
+  }, [details]);
 
   // Lightbox state
   const [lightbox, setLightbox] = useState<{
@@ -77,11 +83,17 @@ export default function EvaluationPage() {
       ]);
       
       setPeriods(periodsRes);
-      if (periodsRes.length > 0 && !periodsRes.find(p => p.name === selectedPeriod)) {
-        if (selectedPeriod === 'HK2-2023-2024' && periodsRes[0].name !== 'HK2-2023-2024') {
-          setSelectedPeriod(periodsRes[0].name);
+      // Auto-select first available period if current one doesn't exist
+      if (periodsRes.length > 0) {
+        // Check if selectedPeriod (as ID) exists in available periods
+        const periodExists = periodsRes.find(p => p.id === selectedPeriod);
+        if (!periodExists && periodsRes[0]) {
+          console.log(`[LoadData] Selected period "${selectedPeriod}" not found. Using first available: "${periodsRes[0].id}"`);
+          setSelectedPeriod(periodsRes[0].id);
           return;
         }
+      } else {
+        console.warn('[LoadData] No grading periods available in database');
       }
 
       const myScore = scores.find(s => s.studentId === user?.username && s.semester === selectedPeriod);
@@ -228,68 +240,154 @@ export default function EvaluationPage() {
   const handleFileUpload = useCallback(async (critId: string, files: FileList | null) => {
     if (!files || files.length === 0) return;
     
-    // We need the current details to check proof length
-    setDetails(currentDetails => {
-      if ((currentDetails[critId]?.proofs?.length || 0) + files.length > 10) {
-        toast.error('Tối đa 10 ảnh minh chứng cho mỗi mục');
-        return currentDetails;
+    // Prevent duplicate uploads if already uploading
+    if (uploadingId) {
+      console.warn(`[handleFileUpload] Upload already in progress for ${uploadingId}, skipping duplicate upload for ${critId}`);
+      toast.warning('Đang tải ảnh, vui lòng chờ...');
+      return;
+    }
+    
+    // Prevent duplicate rapid uploads (within 500ms) - catches React StrictMode double calls
+    const now = Date.now();
+    if (now - lastUploadTime.current < 500) {
+      console.warn(`[handleFileUpload] Duplicate upload detected (${now - lastUploadTime.current}ms since last), skipping`);
+      return;
+    }
+    lastUploadTime.current = now;
+
+    const currentDetails = detailsRef.current;
+
+    if ((currentDetails[critId]?.proofs?.length || 0) + files.length > 10) {
+      toast.error('Tối đa 10 ảnh minh chứng cho mỗi mục');
+      return;
+    }
+
+    // Validate file sizes before uploading
+    const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
+    const invalidFiles: string[] = [];
+    let totalSize = 0;
+
+    for (let i = 0; i < files.length; i++) {
+      totalSize += files[i].size;
+      if (files[i].size > MAX_FILE_SIZE) {
+        invalidFiles.push(`${files[i].name} (${(files[i].size / 1024 / 1024).toFixed(1)}MB)`);
+      }
+    }
+
+    if (invalidFiles.length > 0) {
+      toast.error(`Tệp quá lớn (max 5MB mỗi tệp):\n${invalidFiles.join('\n')}`);
+      return;
+    }
+
+    if (totalSize > 20 * 1024 * 1024) {
+      toast.error('Tổng kích thước vượt quá 20MB. Vui lòng chia nhỏ để tải lên.');
+      return;
+    }
+
+    const readFileAsDataURL = (file: File, timeoutMs = 15000) => {
+      return new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        const timeoutId = setTimeout(() => {
+          try { reader.abort(); } catch {}
+          reject(new Error(`Không đọc được tệp (quá thời gian): ${file.name}`));
+        }, timeoutMs);
+
+        reader.onload = () => {
+          clearTimeout(timeoutId);
+          resolve(reader.result as string);
+        };
+        reader.onerror = () => {
+          clearTimeout(timeoutId);
+          reject(new Error(`Không đọc được tệp: ${file.name}`));
+        };
+        reader.onabort = () => {
+          clearTimeout(timeoutId);
+          reject(new Error(`Đọc tệp bị hủy: ${file.name}`));
+        };
+
+        reader.readAsDataURL(file);
+      });
+    };
+
+    setUploadingId(critId);
+    try {
+      const uploadedUrls: string[] = [];
+      const failedFiles: string[] = [];
+
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+
+        try {
+          const extension = file.name.split('.').pop() || 'jpg';
+          const base64 = await readFileAsDataURL(file);
+
+          const sectionMap: Record<string, string> = { 'sec-1': 'I', 'sec-2': 'II', 'sec-3': 'III', 'sec-4': 'IV', 'sec-5': 'V' };
+          const sectionId = EVALUATION_DATA.find(s => s.criteria.some(c => c.id === critId))?.id || '';
+          const sectionLabel = sectionMap[sectionId] || 'X';
+          const critIndex = critId.split('.')[1];
+          const randomNum = Math.floor(Math.random() * 10000000000);
+          const fileName = `${user?.username}_${sectionLabel}-${critIndex}_${randomNum}.${extension}`;
+
+          console.log(`[handleFileUpload] Uploading ${i + 1}/${files.length}: ${file.name} (${(file.size / 1024).toFixed(1)}KB)`);
+          const res = await drlService.uploadProof(fileName, base64, user?.username || '', critId, selectedPeriod, sectionLabel, sectionId, user?.mssv);
+
+          if (!res || !res.success) {
+            throw new Error(res?.error || 'Unknown error');
+          }
+          if (!res.url_anh && !res.url) {
+            throw new Error('Upload returned no URL');
+          }
+
+          uploadedUrls.push(res.url_anh || res.url);
+          console.log(`[handleFileUpload] Success: ${file.name} → ${res.url_anh || res.url}`);
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : 'Unknown error';
+          console.warn(`[handleFileUpload] Failed file: ${file.name} - ${msg}`);
+          failedFiles.push(`${file.name}: ${msg}`);
+        }
       }
 
-      // Start the upload process
-      (async () => {
-        setUploadingId(critId);
-        try {
-          const uploadedUrls: string[] = [];
-          for (let i = 0; i < files.length; i++) {
-            const file = files[i];
-            const extension = file.name.split('.').pop() || 'jpg';
-            const reader = new FileReader();
-            const base64Promise = new Promise<string>((resolve) => {
-              reader.onload = () => resolve(reader.result as string);
-              reader.readAsDataURL(file);
-            });
-            const base64 = await base64Promise;
-            
-            const sectionMap: Record<string, string> = { 'sec-1': 'I', 'sec-2': 'II', 'sec-3': 'III', 'sec-4': 'IV', 'sec-5': 'V' };
-            const sectionId = EVALUATION_DATA.find(s => s.criteria.some(c => c.id === critId))?.id || '';
-            const sectionLabel = sectionMap[sectionId] || 'X';
-            const critIndex = critId.split('.')[1];
-            const randomNum = Math.floor(Math.random() * 10000000000);
-            const fileName = `${user?.username}_${sectionLabel}-${critIndex}_${randomNum}.${extension}`;
-            
-            const res = await drlService.uploadProof(fileName, base64, user?.username || '', critId, selectedPeriod, sectionLabel, sectionId, user?.mssv);
-            if (res.success && (res.url_anh || res.url)) {
-              uploadedUrls.push(res.url_anh || res.url);
-            }
-          }
-          
-          setDetails(prev => {
-            const currentCrit = (prev[critId] && typeof prev[critId] === 'object') 
-              ? prev[critId] 
-              : { self: 0, class: 0, proofs: [] };
-              
-            const updatedDetails = {
-              ...prev,
-              [critId]: { 
-                ...currentCrit, 
-                proofs: [...(currentCrit.proofs || []), ...uploadedUrls] 
-              }
-            };
-            
-            // Immediate save for proof changes
-            handleSave('draft', updatedDetails);
-            return updatedDetails;
-          });
-        } catch (err) {
-          toast.error('Upload thất bại');
-        } finally {
-          setUploadingId(null);
-        }
-      })();
+      if (uploadedUrls.length === 0) {
+        toast.error('Tải ảnh thất bại. Vui lòng thử lại.');
+        return;
+      }
 
-      return currentDetails;
-    });
-  }, [user, selectedPeriod]);
+      const baseDetails = detailsRef.current;
+      const currentCrit = (baseDetails[critId] && typeof baseDetails[critId] === 'object')
+        ? baseDetails[critId]
+        : { self: 0, class: 0, proofs: [] };
+
+      const newDetailsForSave: DRLDetails = {
+        ...baseDetails,
+        [critId]: {
+          ...currentCrit,
+          proofs: [...(currentCrit.proofs || []), ...uploadedUrls]
+        }
+      };
+
+      detailsRef.current = newDetailsForSave;
+      setDetails(newDetailsForSave);
+
+      // Save to server (this may fail, but files are already uploaded)
+      try {
+        await handleSave('draft', newDetailsForSave);
+        console.log('[handleFileUpload] Saved to server successfully');
+      } catch (saveErr) {
+        console.warn('[handleFileUpload] Save to server failed, but files were uploaded:', saveErr);
+        toast.warning('Ảnh đã tải lên nhưng chưa lưu. Vui lòng nhấn lưu kết quả.');
+      }
+
+      if (failedFiles.length > 0) {
+        toast.error(`Một số ảnh tải lên thất bại:\n${failedFiles.slice(0, 5).join('\n')}${failedFiles.length > 5 ? '\n…' : ''}`);
+      }
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Upload thất bại. Vui lòng thử lại.';
+      console.error('[handleFileUpload] Error:', err);
+      toast.error(errorMessage);
+    } finally {
+      setUploadingId(null);
+    }
+  }, [user, selectedPeriod, uploadingId]);
 
   const removeProof = useCallback(async (critId: string, index: number) => {
     setDetails(currentDetails => {
@@ -475,7 +573,7 @@ export default function EvaluationPage() {
               >
                 {periods.length > 0 ? (
                   periods.map(p => (
-                    <option key={p.id} value={p.name}>{p.name}</option>
+                    <option key={p.id} value={p.id}>{p.name}</option>
                   ))
                 ) : (
                   <option value="HK2-2023-2024">Học kỳ 2 - Năm học 2023-2024</option>

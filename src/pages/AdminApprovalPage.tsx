@@ -366,9 +366,11 @@ export default function AdminApprovalPage() {
       ]);
       
       setPeriods(periodsRes);
-      if (periodsRes.length > 0 && !periodsRes.find(p => p.name === selectedPeriod)) {
-        if (selectedPeriod === 'HK2-2023-2024' && periodsRes[0].name !== 'HK2-2023-2024') {
-          setSelectedPeriod(periodsRes[0].name);
+      // Keep selectedPeriod as period.id (same as student page saves in DRLScore.semester)
+      if (periodsRes.length > 0) {
+        const periodExists = periodsRes.find((p: any) => p.id === selectedPeriod);
+        if (!periodExists && periodsRes[0]?.id) {
+          setSelectedPeriod(periodsRes[0].id);
           return;
         }
       }
@@ -510,12 +512,20 @@ export default function AdminApprovalPage() {
         updatedAt: selectedScore.updatedAt || null
       };
       const saved = await drlService.saveScore(updatedScore);
+
+      // Backend may return a partial payload in some edge cases.
+      // Always keep a valid `details` so the list doesn't temporarily show 0đ.
+      const mergedSaved: DRLScore = {
+        ...updatedScore,
+        ...(saved as any),
+        details: (saved as any)?.details ?? updatedScore.details,
+      };
       setScores(prev => {
         const exists = prev.find(s => s.studentId === selectedScore.studentId && s.semester === selectedPeriod);
         if (exists) {
-          return prev.map(s => s.studentId === selectedScore.studentId && s.semester === selectedPeriod ? saved : s);
+          return prev.map(s => s.studentId === selectedScore.studentId && s.semester === selectedPeriod ? mergedSaved : s);
         }
-        return [...prev, saved];
+        return [...prev, mergedSaved];
       });
       setSelectedScore(null);
       toast.success('Đã lưu kết quả duyệt và hoàn tất phiếu!');

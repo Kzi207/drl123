@@ -110,7 +110,7 @@ export const AdminScoreList: React.FC<AdminScoreListProps> = React.memo(({
               className="px-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-white font-bold text-blue-600"
             >
               {periods.length > 0 ? (
-                periods.map(p => <option key={p.id} value={p.name}>{p.name}</option>)
+                periods.map(p => <option key={p.id} value={p.id}>{p.name}</option>)
               ) : (
                 <option value="HK2-2023-2024">HK2-2023-2024</option>
               )}

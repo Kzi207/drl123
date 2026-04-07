@@ -5,7 +5,7 @@ import { getRank } from '../lib/utils';
 interface EvaluationSummaryProps {
   totalScore: number;
   saving: boolean;
-  onSave: (status: 'submitted' | 'draft') => void;
+  onSave: (status: 'submitted' | 'draft') => Promise<void>;
 }
 
 export const EvaluationSummary: React.FC<EvaluationSummaryProps> = React.memo(({
@@ -61,7 +61,13 @@ export const EvaluationSummary: React.FC<EvaluationSummaryProps> = React.memo(({
         
         <div className="flex items-center gap-3 w-full md:w-auto">
           <button 
-            onClick={() => onSave('submitted')}
+            onClick={async () => {
+              try {
+                await onSave('submitted');
+              } catch {
+                // Error is already handled (toast) in caller; prevent unhandled promise rejection.
+              }
+            }}
             disabled={saving}
             className="flex-1 md:flex-none flex items-center justify-center gap-2 px-10 py-3.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-2xl transition-all shadow-xl shadow-blue-200 active:scale-95 disabled:opacity-50 disabled:pointer-events-none group"
           >

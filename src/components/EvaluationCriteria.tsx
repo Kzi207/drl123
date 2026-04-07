@@ -74,7 +74,11 @@ export const EvaluationCriteria: React.FC<EvaluationCriteriaProps> = React.memo(
                   multiple 
                   accept="image/*" 
                   className="hidden" 
-                  onChange={(e) => onFileUpload(crit.id, e.target.files)}
+                  onChange={(e) => {
+                    onFileUpload(crit.id, e.target.files);
+                    // Clear the input value so the same file can be selected again
+                    e.target.value = '';
+                  }}
                   disabled={uploadingId !== null}
                 />
               </label>

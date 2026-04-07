@@ -1,11 +1,29 @@
+/// <reference types="vite/client" />
 import { User, Student, ClassGroup, GradingPeriod, DRLScore } from '../types';
 
-const API_BASE = '/api-proxy';
+// Priority: 1. Environment variable VITE_API_BASE (from .env)
+//           2. Fallback to /api-proxy for development
+const API_BASE = import.meta.env.VITE_API_BASE || '/api-proxy';
+const API_KEY = import.meta.env.VITE_API_KEY || '';
+
+// Log configuration on startup
+if (typeof window !== 'undefined') {
+  console.log('[API Config]', {
+    BASE: API_BASE,
+    KEY_PRESENT: !!API_KEY,
+    MODE: import.meta.env.MODE
+  });
+}
 
 async function apiFetch(path: string, options: any = {}) {
   const headers = new Headers(options.headers);
   if (!headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
+  }
+
+  // Add API key from environment (required for regular endpoints)
+  if (API_KEY && !headers.has('x-api-key')) {
+    headers.set('x-api-key', API_KEY);
   }
 
   const token = localStorage.getItem('drl_admin_token');
@@ -43,56 +61,100 @@ async function apiFetch(path: string, options: any = {}) {
     }
   }
 
-  if (path.includes('delete-proof') || path.includes('upload')) {
+  if (path.includes('delete-proof')) {
     console.log(`API Request to ${path}:`, body);
   }
 
-  const response = await fetch(`${API_BASE}${path}`, { 
-    ...options, 
-    headers,
-    body
-  });
-
-  const contentType = response.headers.get("content-type");
-  const isJson = contentType && contentType.includes("application/json");
-
-  if (!response.ok) {
-    let errorMessage = `HTTP error! status: ${response.status}`;
+  if (path.includes('upload')) {
+    // IMPORTANT: Do not log raw base64 payloads (can freeze DevTools / browser)
+    // Log only safe metadata.
     try {
-      if (isJson) {
-        const errorData = await response.json();
-        if (errorData.snippet) {
-          // This is our proxy returning a 502 with an HTML snippet
-          errorMessage = `Server returned HTML instead of JSON. Status: ${errorData.status || response.status}. Snippet: ${errorData.snippet.substring(0, 200)}...`;
-        } else {
-          errorMessage = errorData.error || errorData.message || errorMessage;
-        }
-      } else {
-        const text = await response.text();
-        if (text.trim().startsWith('<!')) {
-          errorMessage = `Server returned HTML instead of JSON. Status: ${response.status}`;
-        } else {
-          errorMessage = text.substring(0, 100) || errorMessage;
-        }
-      }
-    } catch (e) {
-      // Ignore parsing error
+      const parsedBody = typeof body === 'string' ? JSON.parse(body) : body;
+      const fileDataLen = typeof parsedBody?.fileData === 'string' ? parsedBody.fileData.length : undefined;
+      console.log(`API Request to ${path}:`, {
+        fileName: parsedBody?.fileName || parsedBody?.filename || parsedBody?.file_name,
+        studentId: parsedBody?.studentId || parsedBody?.tk_sv || parsedBody?.mssv || parsedBody?.ma_sv,
+        category: parsedBody?.category || parsedBody?.crit_id || parsedBody?.ma_tieuchi,
+        periodId: parsedBody?.periodId || parsedBody?.period_id || parsedBody?.semester,
+        fileDataLength: fileDataLen,
+      });
+    } catch {
+      console.log(`API Request to ${path}:`, {
+        bodyType: typeof body,
+        bodyLength: typeof body === 'string' ? body.length : undefined,
+      });
     }
-    throw new Error(errorMessage);
   }
 
-  if (isJson) {
-    return response.json();
-  } else {
-    const text = await response.text();
-    if (text.trim().startsWith('<!')) {
-      throw new Error("Server returned HTML instead of JSON. Please check if the backend URL is correct and accessible.");
+  // Set timeout based on request type
+  const isUpload = path.includes('upload');
+  const timeoutMs = isUpload ? 60000 : 30000; // 60s for uploads, 30s for others
+  
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(`${API_BASE}${path}`, { 
+      ...options, 
+      headers,
+      body,
+      signal: controller.signal
+    });
+
+    clearTimeout(timeoutId);
+
+    const contentType = response.headers.get("content-type");
+    const isJson = contentType && contentType.includes("application/json");
+
+    if (!response.ok) {
+      let errorMessage = `HTTP error! status: ${response.status}`;
+      try {
+        if (isJson) {
+          const errorData = await response.json();
+          if (errorData.snippet) {
+            // This is our proxy returning a 502 with an HTML snippet
+            errorMessage = `Server returned HTML instead of JSON. Status: ${errorData.status || response.status}. Snippet: ${errorData.snippet.substring(0, 200)}...`;
+          } else {
+            errorMessage = errorData.error || errorData.message || errorMessage;
+          }
+        } else {
+          const text = await response.text();
+          if (text.trim().startsWith('<!')) {
+            errorMessage = `Server returned HTML instead of JSON. Status: ${response.status}`;
+          } else {
+            errorMessage = text.substring(0, 100) || errorMessage;
+          }
+        }
+      } catch (e) {
+        // Ignore parsing error
+      }
+      throw new Error(errorMessage);
     }
-    try {
-      return JSON.parse(text);
-    } catch (e) {
-      return text;
+
+    if (isJson) {
+      return response.json();
+    } else {
+      const text = await response.text();
+      if (text.trim().startsWith('<!')) {
+        throw new Error("Server returned HTML instead of JSON. Please check if the backend URL is correct and accessible.");
+      }
+      try {
+        return JSON.parse(text);
+      } catch (e) {
+        return text;
+      }
     }
+  } catch (error) {
+    clearTimeout(timeoutId);
+    
+    if (error instanceof Error) {
+      if (error.name === 'AbortError') {
+        const timeoutSec = isUpload ? '60' : '30';
+        throw new Error(`Yêu cầu vượt quá thời gian chờ (${timeoutSec}s). Vui lòng kiểm tra kết nối mạng hoặc thử lại với tệp nhỏ hơn.`);
+      }
+      throw error;
+    }
+    throw new Error('Unknown error occurred');
   }
 }
 
@@ -237,174 +299,53 @@ export const drlService = {
     });
   },
   deleteProof: async (fileName: string, studentId: string, category: string, periodId?: string, path?: string, scoreId?: string, sectionLabel?: string, sectionId?: string, mssv?: string) => {
-    let hoc_ky = '';
-    let nam_hoc = '';
-    let hk_number = '';
-    if (periodId) {
-      const parts = periodId.split('-');
-      hoc_ky = parts[0];
-      nam_hoc = parts.slice(1).join('-');
-      hk_number = hoc_ky.replace('HK', '');
-    }
-    
-    let baseFileName = fileName;
-    if (fileName.includes('.')) {
-      baseFileName = fileName.split('.')[0];
-    }
-    
+    // Simplified delete proof - use main endpoints with fallback
     const tk_sv = mssv || studentId;
-    const hk = hoc_ky;
-    const nh = nam_hoc;
-
-    const body = { 
-      fileName, 
-      filename: fileName, 
-      file_name: fileName,
-      base_filename: baseFileName,
-      path,
-      fullPath: path,
-      file_path: path,
-      studentId, 
-      student_id: studentId,
-      tk_sv: tk_sv, 
-      mssv: tk_sv, 
-      ma_sv: tk_sv,
-      id_sv: tk_sv,
-      user_id: tk_sv,
-      id_user: tk_sv,
-      category,
-      crit_id: category,
-      id_tieuchi: category,
-      ma_tieuchi: category,
-      section_label: sectionLabel,
-      section_id: sectionId,
-      period_id: periodId,
-      periodId: periodId,
-      hoc_ky,
-      nam_hoc,
-      ma_hk: hk,
-      ma_nh: nh,
-      hk: hoc_ky,
-      nh: nam_hoc,
-      hk_number,
-      semester: periodId,
-      scoreId,
-      score_id: scoreId,
-      id_phieu: scoreId,
-      ma_phieu: scoreId,
-      action: 'delete'
-    };
     
-    // Create different path variations to try
-    const pathVariations = [path];
-    if (path && path.startsWith('uploads/')) {
-      pathVariations.push(path.replace('uploads/', ''));
-    }
-    if (path && path.includes('/')) {
-      pathVariations.push(path.split('/').pop()); // Just filename
-    }
-    pathVariations.push(fileName);
+    const deleteBody = { 
+      tk_sv,
+      studentId,
+      student_id: studentId,
+      mssv: tk_sv,
+      ma_sv: tk_sv,
+      category,
+      muc_danh_gia: category,
+      crit_id: category,
+      fileName,
+      path,
+      scoreId
+    };
 
+    // Primary endpoints to try (in order of preference)
     const endpoints = [
-      '/api/delete-proof',
-      '/delete-proof',
-      '/api/delete-proof.php',
-      '/delete-proof.php',
-      '/api/delete_proof',
-      '/delete_proof',
-      '/api/delete_proof.php',
-      '/delete_proof.php',
-      '/api/remove-proof',
-      '/remove-proof',
-      '/api/delete-file',
-      '/delete-file',
-      '/api/delete-upload',
-      '/delete-upload',
-      '/api/delete',
-      '/delete',
-      '/upload',
-      '/api/upload',
-      '/upload.php',
-      '/api/upload.php'
+      { method: 'DELETE', path: '/delete-proof' },
+      { method: 'DELETE', path: '/api/delete-proof' },
+      { method: 'POST', path: '/api/delete-proof' },
     ];
 
     let lastError: any = null;
-    
-    // Try each endpoint with each path variation
+
     for (const endpoint of endpoints) {
-      for (const currentPath of pathVariations) {
-        if (currentPath === undefined) continue;
+      try {
+        console.log(`[deleteProof] Trying ${endpoint.method} ${endpoint.path}`);
+        const response = await apiFetch(endpoint.path, {
+          method: endpoint.method,
+          body: deleteBody,
+        });
         
-        const query = `tk_sv=${tk_sv}&ma_sv=${tk_sv}&mssv=${tk_sv}&ma_hk=${hk}&ma_nh=${nh}&hk=${hk}&nh=${nh}&hk_number=${hk_number}&ma_tieuchi=${category}&id_tieuchi=${category}&crit_id=${category}&fileName=${encodeURIComponent(fileName)}&path=${encodeURIComponent(currentPath || '')}&hk_number=${hk_number}&action=delete`;
-        
-        const currentBody = { 
-          ...body,
-          path: currentPath,
-          fullPath: currentPath,
-          file_path: currentPath,
-          fileName: fileName,
-          filename: fileName,
-          action: 'delete'
-        };
-
-        try {
-          const response = await apiFetch(`${endpoint}?${query}`, {
-            method: 'POST',
-            body: currentBody,
-          });
-          if (response) return response;
-        } catch (e: any) {
-          lastError = e;
-          // Continue to next variation if 404
+        if (response && response.success !== false) {
+          console.log(`[deleteProof] Success with ${endpoint.method} ${endpoint.path}`);
+          return response;
         }
+      } catch (e: any) {
+        lastError = e;
+        console.warn(`[deleteProof] Failed ${endpoint.method} ${endpoint.path}:`, e.message);
+        // Continue to next endpoint
       }
     }
 
-    // If all POSTs failed, try DELETE method
-    const deleteEndpoints = [
-      '/api/delete-proof',
-      '/delete-proof',
-      '/api/delete_proof',
-      '/delete_proof',
-      '/upload',
-      '/api/upload'
-    ];
-
-    for (const endpoint of deleteEndpoints) {
-      for (const currentPath of pathVariations) {
-        if (currentPath === undefined) continue;
-        
-        const query = `tk_sv=${tk_sv}&ma_sv=${tk_sv}&mssv=${tk_sv}&ma_hk=${hk}&ma_nh=${nh}&hk=${hk}&nh=${nh}&hk_number=${hk_number}&ma_tieuchi=${category}&id_tieuchi=${category}&crit_id=${category}&fileName=${encodeURIComponent(fileName)}&path=${encodeURIComponent(currentPath || '')}&hk_number=${hk_number}&action=delete`;
-
-        try {
-          const response = await apiFetch(`${endpoint}?${query}`, {
-            method: 'DELETE',
-            body: { ...body, path: currentPath, action: 'delete' },
-          });
-          if (response) return response;
-        } catch (e: any) {
-          lastError = e;
-        }
-      }
-    }
-
-    // Last resort: try GET method
-    for (const endpoint of deleteEndpoints) {
-      for (const currentPath of pathVariations) {
-        if (currentPath === undefined) continue;
-        const query = `tk_sv=${tk_sv}&ma_sv=${tk_sv}&mssv=${tk_sv}&ma_hk=${hk}&ma_nh=${nh}&hk=${hk}&nh=${nh}&hk_number=${hk_number}&ma_tieuchi=${category}&id_tieuchi=${category}&crit_id=${category}&fileName=${encodeURIComponent(fileName)}&path=${encodeURIComponent(currentPath || '')}&hk_number=${hk_number}&action=delete&method=delete`;
-        try {
-          const response = await apiFetch(`${endpoint}?${query}`, {
-            method: 'GET'
-          });
-          if (response) return response;
-        } catch (e: any) {
-          lastError = e;
-        }
-      }
-    }
-
-    throw lastError || new Error('Failed to delete proof: All endpoint/path/method combinations returned Not Found');
+    // If all fail, throw last error
+    throw lastError || new Error('Failed to delete proof - all endpoint attempts failed');
   },
   getProofs: async (studentId: string): Promise<{ success: boolean; proofs: Record<string, string[]> }> => {
     return apiFetch(`/api/get-proofs?tk_sv=${studentId}`);
