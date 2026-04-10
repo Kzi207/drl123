@@ -18,6 +18,7 @@ export default function EvaluationPage() {
   const [details, setDetails] = useState<DRLDetails>({});
   const detailsRef = useRef<DRLDetails>({});
   const [scoreId, setScoreId] = useState<string | null>(null);
+  const [scoreStatus, setScoreStatus] = useState<DRLScore['status']>('draft');
   const [periods, setPeriods] = useState<any[]>([]);
   const [selectedPeriod, setSelectedPeriod] = useState<string>('HK2-2023-2024');
   const [loading, setLoading] = useState(true);
@@ -101,9 +102,11 @@ export default function EvaluationPage() {
       
       if (myScore) {
         setScoreId(myScore.id || null);
+        setScoreStatus(myScore.status || 'draft');
         initialDetails = parseDRLDetails(myScore.details);
       } else {
         setScoreId(null);
+        setScoreStatus('draft');
         // Initialize empty details
         EVALUATION_DATA.forEach(sec => {
           sec.criteria.forEach(crit => {
@@ -149,10 +152,13 @@ export default function EvaluationPage() {
 
       setDetails(initialDetails);
 
-      // Check for local draft
+      // Check for local draft (only for unapproved scores)
       const draftKey = `drl_draft_${user?.username}_${selectedPeriod}`;
       const localDraft = localStorage.getItem(draftKey);
-      if (localDraft) {
+      const approvedStatuses: DRLScore['status'][] = ['class_approved', 'bch_approved', 'finalized'];
+      const isApproved = myScore ? approvedStatuses.includes(myScore.status) : false;
+
+      if (localDraft && !isApproved) {
         try {
           const parsedDraft = JSON.parse(localDraft);
           // Only suggest restoring if it's different from what we just loaded
@@ -163,6 +169,9 @@ export default function EvaluationPage() {
         } catch (e) {
           console.error('Failed to parse local draft', e);
         }
+      } else if (localDraft && isApproved) {
+        // If the score is already approved, discard local draft to avoid overwriting class-approved data.
+        localStorage.removeItem(draftKey);
       }
       
       // Mark initial load as complete after a short delay to avoid immediate auto-save
@@ -245,6 +254,8 @@ export default function EvaluationPage() {
       if (savedScore && savedScore.id) {
         setScoreId(savedScore.id);
       }
+
+      setScoreStatus(status);
       
       // Clear local draft on successful server save
       const draftKey = `drl_draft_${user?.username}_${selectedPeriod}`;
@@ -480,6 +491,10 @@ export default function EvaluationPage() {
   }, [user, selectedPeriod, scoreId]);
 
   const totalScore = useMemo(() => calculateDRLScore(details, EVALUATION_DATA, 'self'), [details]);
+
+  const canViewClassScore = useMemo(() => {
+    return ['class_approved', 'bch_approved', 'finalized'].includes(scoreStatus);
+  }, [scoreStatus]);
   
   const sectionScores = useMemo(() => {
     const scores: Record<string, number> = {};
@@ -669,6 +684,7 @@ export default function EvaluationPage() {
             key={section.id}
             section={section}
             details={details}
+            showClassScore={canViewClassScore}
             isExpanded={expandedSections.includes(section.id)}
             onToggle={toggleSection}
             sectionScore={sectionScores[section.id]}
@@ -710,7 +726,7 @@ export default function EvaluationPage() {
                 bchScore: 0,
                 finalScore: 0,
                 details: JSON.stringify(details),
-                status: 'draft'
+                status: scoreStatus
               }} 
             />
           )}
@@ -775,7 +791,7 @@ export default function EvaluationPage() {
                       bchScore: 0,
                       finalScore: 0,
                       details: JSON.stringify(details),
-                      status: 'draft'
+                      status: scoreStatus
                     }} 
                   />
                 )}

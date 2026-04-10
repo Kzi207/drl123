@@ -7,6 +7,7 @@ interface EvaluationCriteriaProps {
   crit: Criterion;
   details: DRLDetails;
   uploadingId: string | null;
+  showClassScore?: boolean;
   onScoreChange: (critId: string, value: number, max: number) => void;
   onFileUpload: (critId: string, files: FileList | null) => void;
   onRemoveProof: (critId: string, index: number) => void;
@@ -17,6 +18,7 @@ export const EvaluationCriteria: React.FC<EvaluationCriteriaProps> = React.memo(
   crit,
   details,
   uploadingId,
+  showClassScore = true,
   onScoreChange,
   onFileUpload,
   onRemoveProof,
@@ -46,18 +48,25 @@ export const EvaluationCriteria: React.FC<EvaluationCriteriaProps> = React.memo(
                 <span className="text-[9px] text-slate-400 uppercase font-bold mb-1">Tự chấm</span>
                 <input 
                   type="number"
-                  value={critData.self || 0}
-                  onChange={(e) => onScoreChange(crit.id, parseInt(e.target.value) || 0, crit.maxPoints)}
+                  value={critData.self === 0 ? '' : critData.self}
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    onScoreChange(crit.id, raw === '' ? 0 : (parseInt(raw, 10) || 0), crit.maxPoints);
+                  }}
                   className="w-14 px-1 py-1 border-b-2 border-slate-100 rounded-none text-center focus:border-blue-500 outline-none text-base font-bold bg-transparent transition-colors"
                 />
               </div>
-              <div className="h-8 w-px bg-slate-100"></div>
-              <div className="flex flex-col items-center">
-                <span className="text-[9px] text-slate-400 uppercase font-bold mb-1">Lớp chấm</span>
-                <div className="w-14 py-1 text-center text-slate-400 font-bold text-base">
-                  {critData.class || 0}
-                </div>
-              </div>
+              {showClassScore && (
+                <>
+                  <div className="h-8 w-px bg-slate-100"></div>
+                  <div className="flex flex-col items-center">
+                    <span className="text-[9px] text-slate-400 uppercase font-bold mb-1">Lớp chấm</span>
+                    <div className="w-14 py-1 text-center text-slate-400 font-bold text-base">
+                      {critData.class === 0 ? '' : critData.class}
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
             
             <div className="flex items-center gap-2">

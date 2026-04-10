@@ -53,15 +53,18 @@ export const AdminEvaluationCriteria: React.FC<AdminEvaluationCriteriaProps> = R
           <div className="flex items-center gap-6 bg-blue-50/30 p-2 px-4 rounded-xl border border-blue-100 w-fit shadow-sm">
             <div className="text-center">
               <p className="text-[8px] text-slate-400 uppercase font-black tracking-widest mb-0.5">Tự chấm</p>
-              <p className="text-lg font-black text-slate-700">{critData.self || 0}</p>
+              <p className="text-lg font-black text-slate-700">{critData.self === 0 ? '' : critData.self}</p>
             </div>
             <div className="h-8 w-px bg-blue-100/50"></div>
             <div className="text-center">
               <p className="text-[8px] text-blue-400 uppercase font-black tracking-widest mb-0.5">Lớp chấm</p>
               <input 
                 type="number"
-                value={critData.class || 0}
-                onChange={(e) => onClassScoreChange(crit.id, parseInt(e.target.value) || 0, crit.maxPoints)}
+                value={critData.class === 0 ? '' : critData.class}
+                onChange={(e) => {
+                  const raw = e.target.value;
+                  onClassScoreChange(crit.id, raw === '' ? 0 : (parseInt(raw, 10) || 0), crit.maxPoints);
+                }}
                 className="w-12 px-1 py-0.5 border-b-2 border-blue-200 rounded-none text-center focus:border-blue-500 outline-none text-lg font-black text-blue-600 bg-transparent transition-all"
               />
             </div>

@@ -7,6 +7,7 @@ import { EvaluationCriteria } from './EvaluationCriteria';
 interface EvaluationSectionProps {
   section: Section;
   details: DRLDetails;
+  showClassScore?: boolean;
   isExpanded: boolean;
   onToggle: (id: string) => void;
   sectionScore: number;
@@ -20,6 +21,7 @@ interface EvaluationSectionProps {
 export const EvaluationSection: React.FC<EvaluationSectionProps> = React.memo(({
   section,
   details,
+  showClassScore = true,
   isExpanded,
   onToggle,
   sectionScore,
@@ -81,6 +83,7 @@ export const EvaluationSection: React.FC<EvaluationSectionProps> = React.memo(({
                   key={crit.id}
                   crit={crit}
                   details={details}
+                  showClassScore={showClassScore}
                   uploadingId={uploadingId}
                   onScoreChange={onScoreChange}
                   onFileUpload={onFileUpload}

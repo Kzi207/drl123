@@ -23,6 +23,11 @@ export const PrintableScorecard = React.forwardRef<PrintableScorecardRef, Printa
     const totalSelf = calculateDRLScore(details, EVALUATION_DATA, 'self');
     const totalClass = calculateDRLScore(details, EVALUATION_DATA, 'class');
 
+    const displayScore = (value: unknown) => {
+      const n = Number(value);
+      return n === 0 || Number.isNaN(n) ? '' : n;
+    };
+
     useEffect(() => {
       const logoUrl = 'https://pub-a3070670d3f6440188958284fa449261.r2.dev/logo%202.png';
       const proxiedUrl = `https://images.weserv.nl/?url=${encodeURIComponent(logoUrl.replace(/^https?:\/\//, ''))}`;
@@ -306,8 +311,8 @@ export const PrintableScorecard = React.forwardRef<PrintableScorecardRef, Printa
                       <td className="p-2.5 px-4 leading-snug" style={{ border: '1px solid #000000' }}>{crit.content}</td>
                       <td className="p-2.5 text-center font-medium" style={{ border: '1px solid #000000' }}>{crit.maxPoints}</td>
                       <td className="p-2.5 text-center" style={{ border: '1px solid #000000' }}></td>
-                      <td className="p-2.5 text-center font-bold" style={{ border: '1px solid #000000', color: '#374151' }}>{details[crit.id]?.self || 0}</td>
-                      <td className="p-2.5 text-center font-bold" style={{ border: '1px solid #000000', color: '#374151' }}>{details[crit.id]?.class || 0}</td>
+                      <td className="p-2.5 text-center font-bold" style={{ border: '1px solid #000000', color: '#374151' }}>{displayScore(details[crit.id]?.self)}</td>
+                      <td className="p-2.5 text-center font-bold" style={{ border: '1px solid #000000', color: '#374151' }}>{displayScore(details[crit.id]?.class)}</td>
                       <td className="p-2.5 text-center" style={{ border: '1px solid #000000' }}></td>
                     </tr>
                   ))}
