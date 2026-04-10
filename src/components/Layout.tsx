@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { 
   LayoutDashboard, 
+  ArrowUp,
   FileText, 
   User, 
   LogOut, 
@@ -19,6 +20,16 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const location = useLocation();
   const navigate = useNavigate();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [showScrollTop, setShowScrollTop] = useState(false);
+
+  useEffect(() => {
+    const onScroll = () => {
+      setShowScrollTop(window.scrollY > 300);
+    };
+    onScroll();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
 
   const handleLogout = () => {
     logout();
@@ -132,6 +143,16 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           <p className="text-sm text-slate-400">© 2025 Đoàn Khoa Kỹ Thuật Cơ Khí. Phát triển bởi Khánh Duy.</p>
         </div>
       </footer>
+
+      {showScrollTop && (
+        <button
+          onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+          className="fixed right-5 bottom-24 z-50 p-3 rounded-full bg-blue-600 text-white shadow-lg shadow-blue-200 hover:bg-blue-700 transition-all active:scale-95"
+          title="Quay lại đầu trang"
+        >
+          <ArrowUp size={20} />
+        </button>
+      )}
     </div>
   );
 }
