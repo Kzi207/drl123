@@ -196,7 +196,13 @@ export default function AdminManagementPage() {
         endDate: periodFormData.endDate || '',
       };
 
-      await drlService.savePeriod(periodData as GradingPeriod);
+      // Use updatePeriod for editing, savePeriod for creating
+      if (editingPeriod) {
+        await drlService.updatePeriod(periodData as GradingPeriod);
+      } else {
+        await drlService.savePeriod(periodData as GradingPeriod);
+      }
+      
       showToast('success', editingPeriod ? 'Cập nhật đợt chấm thành công' : 'Thêm đợt chấm thành công');
       setIsPeriodModalOpen(false);
       loadData();

@@ -1,17 +1,22 @@
 import React from 'react';
-import { Send, Loader2 } from 'lucide-react';
+import { Send, Loader2, Clock, AlertCircle, CheckCircle } from 'lucide-react';
 import { getRank } from '../lib/utils';
 
 interface EvaluationSummaryProps {
   totalScore: number;
   saving: boolean;
   onSave: (status: 'submitted' | 'draft') => Promise<void>;
+  periodStatus?: {
+    status: 'active' | 'not-started' | 'expired' | 'unknown';
+    message: string;
+  };
 }
 
 export const EvaluationSummary: React.FC<EvaluationSummaryProps> = React.memo(({
   totalScore,
   saving,
-  onSave
+  onSave,
+  periodStatus
 }) => {
   const rank = getRank(totalScore);
   
@@ -49,6 +54,42 @@ export const EvaluationSummary: React.FC<EvaluationSummaryProps> = React.memo(({
             </span>
           </div>
           
+          {periodStatus && periodStatus.status !== 'unknown' && (
+            <>
+              <div className="h-10 w-px bg-slate-200 hidden md:block"></div>
+              
+              <div className="flex items-center gap-2">
+                {periodStatus.status === 'active' && (
+                  <>
+                    <CheckCircle className="text-emerald-600" size={20} />
+                    <div className="flex flex-col">
+                      <span className="text-[10px] text-slate-400 uppercase font-bold tracking-widest">Trạng thái</span>
+                      <span className="text-sm font-bold text-emerald-600">Đang diễn ra</span>
+                    </div>
+                  </>
+                )}
+                {periodStatus.status === 'not-started' && (
+                  <>
+                    <Clock className="text-amber-600" size={20} />
+                    <div className="flex flex-col">
+                      <span className="text-[10px] text-slate-400 uppercase font-bold tracking-widest">Trạng thái</span>
+                      <span className="text-sm font-bold text-amber-600">Chưa bắt đầu</span>
+                    </div>
+                  </>
+                )}
+                {periodStatus.status === 'expired' && (
+                  <>
+                    <AlertCircle className="text-red-600" size={20} />
+                    <div className="flex flex-col">
+                      <span className="text-[10px] text-slate-400 uppercase font-bold tracking-widest">Trạng thái</span>
+                      <span className="text-sm font-bold text-red-600">Đã kết thúc</span>
+                    </div>
+                  </>
+                )}
+              </div>
+            </>
+          )}
+          
           <div className="hidden lg:block flex-1 max-w-[200px] ml-4">
             <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden border border-slate-200/50">
               <div 
@@ -59,25 +100,38 @@ export const EvaluationSummary: React.FC<EvaluationSummaryProps> = React.memo(({
           </div>
         </div>
         
-        <div className="flex items-center gap-3 w-full md:w-auto">
-          <button 
-            onClick={async () => {
-              try {
-                await onSave('submitted');
-              } catch {
-                // Error is already handled (toast) in caller; prevent unhandled promise rejection.
-              }
-            }}
-            disabled={saving}
-            className="flex-1 md:flex-none flex items-center justify-center gap-2 px-10 py-3.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-2xl transition-all shadow-xl shadow-blue-200 active:scale-95 disabled:opacity-50 disabled:pointer-events-none group"
-          >
-            {saving ? (
-              <Loader2 className="animate-spin" size={20} />
-            ) : (
-              <Send size={20} className="group-hover:translate-x-1 group-hover:-translate-y-1 transition-transform" />
-            )}
-            Nộp phiếu điểm
-          </button>
+        <div className="flex flex-col items-start md:items-end gap-2 w-full md:w-auto">
+          {periodStatus && periodStatus.status !== 'active' && periodStatus.status !== 'unknown' && (
+            <div className={cn(
+              "text-xs font-semibold px-3 py-1.5 rounded-full text-center",
+              periodStatus.status === 'not-started' 
+                ? 'bg-amber-50 text-amber-700 border border-amber-200' 
+                : 'bg-red-50 text-red-700 border border-red-200'
+            )}>
+              {periodStatus.message}
+            </div>
+          )}
+          <div className="flex items-center gap-3 w-full md:w-auto">
+            <button 
+              onClick={async () => {
+                try {
+                  await onSave('submitted');
+                } catch {
+                  // Error is already handled (toast) in caller; prevent unhandled promise rejection.
+                }
+              }}
+              disabled={saving || (periodStatus?.status !== 'active' && periodStatus?.status !== 'unknown')}
+              title={periodStatus?.status !== 'active' && periodStatus?.status !== 'unknown' ? periodStatus?.message : ''}
+              className="flex-1 md:flex-none flex items-center justify-center gap-2 px-10 py-3.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-2xl transition-all shadow-xl shadow-blue-200 active:scale-95 disabled:opacity-50 disabled:pointer-events-none group"
+            >
+              {saving ? (
+                <Loader2 className="animate-spin" size={20} />
+              ) : (
+                <Send size={20} className="group-hover:translate-x-1 group-hover:-translate-y-1 transition-transform" />
+              )}
+              Nộp phiếu điểm
+            </button>
+          </div>
         </div>
       </div>
     </div>

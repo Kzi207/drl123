@@ -359,6 +359,12 @@ export const drlService = {
       body: period,
     });
   },
+  updatePeriod: async (period: GradingPeriod) => {
+    return apiFetch('/grading_periods', {
+      method: 'PUT',
+      body: period,
+    });
+  },
   deletePeriod: async (id: string) => {
     return apiFetch('/grading_periods', {
       method: 'DELETE',

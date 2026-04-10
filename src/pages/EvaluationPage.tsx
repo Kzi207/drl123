@@ -198,6 +198,33 @@ export default function EvaluationPage() {
     });
   }, []);
 
+  // Calculate period status
+  const getPeriodStatus = () => {
+    const activePeriod = periods.find(p => p.id === selectedPeriod);
+    if (!activePeriod) return { status: 'unknown', message: 'Không tìm thấy đợt chấm' };
+    
+    const today = new Date();
+    const todayDate = today.toISOString().split('T')[0]; // YYYY-MM-DD format
+    const startDate = activePeriod.startDate ? new Date(activePeriod.startDate).toISOString().split('T')[0] : null;
+    const endDate = activePeriod.endDate ? new Date(activePeriod.endDate).toISOString().split('T')[0] : null;
+    
+    if (startDate && todayDate < startDate) {
+      return { 
+        status: 'not-started', 
+        message: `Đợt chấm "${activePeriod.name}" sẽ bắt đầu từ ngày ${new Date(startDate).toLocaleDateString('vi-VN')}` 
+      };
+    }
+    
+    if (endDate && todayDate > endDate) {
+      return { 
+        status: 'expired', 
+        message: `Đợt chấm "${activePeriod.name}" đã kết thúc vào ngày ${new Date(endDate).toLocaleDateString('vi-VN')}` 
+      };
+    }
+    
+    return { status: 'active', message: `Đợt chấm "${activePeriod.name}" đang diễn ra` };
+  };
+
   const handleSave = async (status: DRLScore['status'] = 'draft', customDetails?: DRLDetails) => {
     const detailsToSave = customDetails || details;
     setSaving(true);
@@ -228,9 +255,17 @@ export default function EvaluationPage() {
       if (!customDetails) {
         toast.success(status === 'submitted' ? 'Đã gửi phiếu điểm thành công' : 'Đã lưu bản nháp');
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Save failed', err);
-      toast.error('Lưu thất bại. Vui lòng kiểm tra kết nối mạng.');
+      
+      // Check for period time validation errors from backend
+      if (err?.code === 'NOT_STARTED' || err?.message?.includes('Chưa đến thời gian')) {
+        toast.error(err?.message || 'Chưa đến thời gian chấm. Vui lòng chờ đến ngày bắt đầu của đợt chấm.');
+      } else if (err?.code === 'EXPIRED' || err?.message?.includes('Đã hết hạn')) {
+        toast.error(err?.message || 'Đợt chấm đã kết thúc. Vui lòng liên hệ quản trị viên để nộp muộn.');
+      } else {
+        toast.error('Lưu thất bại. Vui lòng kiểm tra kết nối mạng.');
+      }
       throw err;
     } finally {
       setSaving(false);
@@ -650,6 +685,7 @@ export default function EvaluationPage() {
         totalScore={totalScore}
         saving={saving}
         onSave={handleSave}
+        periodStatus={getPeriodStatus()}
       />
       <div className="absolute top-0 left-0 opacity-0 pointer-events-none z-[-1]" style={{ width: '210mm' }} id="printable-scorecard-container">
         <div id="printable-scorecard">

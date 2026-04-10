@@ -20,16 +20,19 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
+      const u = username.trim();
+      const p = password.trim();
+
       if (isAdmin) {
-        const res = await adminAuthService.login(username, password);
+        const res = await adminAuthService.login(u, p);
         if (res.success) {
-          login({ username: res.username || username, role: 'admin' }, res.token);
+          login({ username: res.username || u, role: 'admin' }, res.token);
           navigate('/admin');
         } else {
           setError(res.error || 'Đăng nhập admin thất bại');
         }
       } else {
-        const user = await authService.login(username, password);
+        const user = await authService.login(u, p);
         login(user, (user as any).token);
         navigate('/');
       }
