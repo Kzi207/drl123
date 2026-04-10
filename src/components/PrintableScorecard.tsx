@@ -29,7 +29,7 @@ export const PrintableScorecard = React.forwardRef<PrintableScorecardRef, Printa
     };
 
     useEffect(() => {
-      const logoUrl = 'https://pub-a3070670d3f6440188958284fa449261.r2.dev/logo%202.png';
+      const logoUrl = 'https://pub-a3070670d3f6440188958284fa449261.r2.dev/pasted-1775135109395.png';
       const proxiedUrl = `https://images.weserv.nl/?url=${encodeURIComponent(logoUrl.replace(/^https?:\/\//, ''))}`;
       
       if (logoCache[logoUrl]) {
@@ -225,7 +225,7 @@ export const PrintableScorecard = React.forwardRef<PrintableScorecardRef, Printa
             </div>
             <div className="mt-3 flex justify-center">
               <img 
-                src={logoBase64 || "https://pub-a3070670d3f6440188958284fa449261.r2.dev/logo%202.png"} 
+                src={logoBase64 || "https://pub-a3070670d3f6440188958284fa449261.r2.dev/pasted-1775135109395.png"} 
                 alt="Logo" 
                 className="w-14 h-14 object-contain" 
                 referrerPolicy="no-referrer"

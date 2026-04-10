@@ -52,7 +52,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         <div className="max-w-full mx-auto px-4 md:px-12 h-20 flex items-center justify-between">
           <div className="flex items-center gap-4">
             <img 
-              src="https://pub-a3070670d3f6440188958284fa449261.r2.dev/logo%202.png" 
+              src="https://pub-a3070670d3f6440188958284fa449261.r2.dev/pasted-1775135109395.png" 
               alt="Logo" 
               className="w-14 h-14 object-contain"
               referrerPolicy="no-referrer"
