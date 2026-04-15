@@ -4,6 +4,7 @@ import { authService, adminAuthService } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { LogIn, User as UserIcon, ShieldCheck } from 'lucide-react';
 import { motion } from 'motion/react';
+const appLogo = 'https://pub-a3070670d3f6440188958284fa449261.r2.dev/Tên Dự án 14.png';
 
 export default function LoginPage() {
   const [username, setUsername] = useState('');
@@ -51,16 +52,16 @@ export default function LoginPage() {
         className="max-w-md w-full bg-white rounded-2xl shadow-xl p-8 border border-slate-100"
       >
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-28 h-28 mb-4">
+          <div className="inline-flex items-center justify-center w-24 h-24 mb-2">
             <img 
-              src="https://pub-a3070670d3f6440188958284fa449261.r2.dev/pasted-1775135109395.png" 
+              src={appLogo}
               alt="Logo" 
               className="w-full h-full object-contain"
-              referrerPolicy="no-referrer"
             />
           </div>
-          <h1 className="text-2xl font-bold text-slate-900 uppercase tracking-tight">Đoàn Khoa Kỹ Thuật Cơ Khí</h1>
-          <p className="text-slate-500 mt-2">Vui lòng đăng nhập để tiếp tục</p>
+          <h2 className="text-[13px] sm:text-sm font-semibold text-slate-600 uppercase tracking-widest mb-1.5">Trường Đại học Kỹ thuật - Công nghệ Cần Thơ</h2>
+          <h1 className="text-lg sm:text-xl font-bold text-[#1a4b92] uppercase tracking-wide pb-5 border-b border-slate-200/80 mb-5">Khoa Kỹ thuật cơ khí</h1>
+          <h2 className="text-lg sm:text-xl font-bold text-slate-800 uppercase tracking-tight">Cổng chấm điểm rèn luyện</h2>
         </div>
 
         <div className="flex bg-slate-100 p-1 rounded-lg mb-6">

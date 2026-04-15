@@ -16,8 +16,6 @@ export default defineConfig(({mode}) => {
       },
     },
     server: {
-      // HMR is disabled in AI Studio via DISABLE_HMR env var.
-      // Do not modify – file watching is disabled to prevent flickering during agent edits.
       hmr: process.env.DISABLE_HMR !== 'true',
       proxy: {
         '/api-proxy': {
@@ -26,6 +24,42 @@ export default defineConfig(({mode}) => {
           rewrite: (path) => path.replace(/^\/api-proxy/, '/api-proxy'),
         },
       },
+    },
+    build: {
+      // Code splitting for better caching
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            // Split vendor libraries into separate chunks
+            'react-vendor': ['react', 'react-dom', 'react-router-dom'],
+            // Large pages in their own chunks for lazy loading
+            'admin-pages': [
+              './src/pages/AdminApprovalPage.tsx',
+              './src/pages/AdminDashboard.tsx',
+              './src/pages/AdminManagementPage.tsx',
+            ],
+            'user-pages': [
+              './src/pages/EvaluationPage.tsx',
+              './src/pages/ProfilePage.tsx',
+            ],
+          },
+        },
+      },
+      // Minify and compress
+      minify: 'terser',
+      terserOptions: {
+        compress: {
+          drop_console: true, // Remove console logs in production
+        },
+      },
+      // Set chunk size warning threshold
+      chunkSizeWarningLimit: 500,
+      // Enable source maps for production debugging
+      sourcemap: false,
+      // Optimize CSS
+      cssCodeSplit: true,
+      // Preload important chunks
+      reportCompressedSize: false,
     },
   };
 });

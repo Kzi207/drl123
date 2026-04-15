@@ -47,15 +47,33 @@ export function formatImageUrl(url: string | undefined): string {
 
 export function parseDRLDetails(details: any): DRLDetails {
   let parsed: any = {};
-  if (typeof details === 'string') {
+
+  // --- Unwrap up to 3 levels of JSON stringification ---
+  let current: any = details;
+  for (let i = 0; i < 3; i++) {
+    if (typeof current === 'string' && current.trim().startsWith('{')) {
+      try {
+        current = JSON.parse(current);
+      } catch {
+        break;
+      }
+    } else {
+      break;
+    }
+  }
+  
+  if (current && typeof current === 'object') {
+    parsed = current;
+  } else if (current === null || current === undefined || (typeof current === 'string' && !current.trim())) {
+    parsed = {};
+  } else {
+    // Last resort: try parsing once more
     try {
-      parsed = JSON.parse(details);
-    } catch (e) {
-      console.error('Failed to parse DRL details', e);
+      parsed = JSON.parse(String(current));
+    } catch {
+      console.error('[parseDRLDetails] Could not parse details:', current);
       return {};
     }
-  } else {
-    parsed = details || {};
   }
 
   // Normalize data structure

@@ -36,34 +36,34 @@ export const EvaluationSection: React.FC<EvaluationSectionProps> = React.memo(({
       <button 
         onClick={() => onToggle(section.id)}
         className={cn(
-          "w-full flex items-center justify-between p-4 transition-colors text-left",
+          "w-full flex items-center justify-between p-3 md:p-4 transition-colors text-left gap-2 md:gap-4",
           isExpanded ? "bg-slate-50/80 border-b border-slate-100" : "bg-white hover:bg-slate-50"
         )}
       >
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3 md:gap-4 flex-1">
           <div className={cn(
-            "w-10 h-10 rounded-xl flex items-center justify-center font-bold text-sm shadow-sm transition-all",
+            "w-8 h-8 md:w-10 md:h-10 shrink-0 rounded-lg md:rounded-xl flex items-center justify-center font-bold text-xs md:text-sm shadow-sm transition-all",
             isExpanded ? "bg-blue-600 text-white scale-110" : "bg-slate-100 text-slate-500"
           )}>
             {section.id.split('-')[1]}
           </div>
-          <h2 className="font-bold text-slate-800 text-base md:text-lg leading-tight max-w-md">{section.title}</h2>
+          <h2 className="font-bold text-slate-800 text-[13px] md:text-lg leading-tight md:max-w-md">{section.title}</h2>
         </div>
-        <div className="flex items-center gap-6">
-          <div className="flex flex-col items-end">
-            <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-0.5">Điểm mục</span>
+        <div className="flex items-center gap-2 md:gap-6 shrink-0">
+          <div className="flex flex-col items-center md:items-end">
+            <span className="text-[8px] md:text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-0.5">Điểm mục</span>
             <span className={cn(
-              "text-sm font-bold px-3 py-1 rounded-full",
+              "text-[10px] md:text-sm font-bold px-2 py-0.5 md:px-3 md:py-1 rounded-full whitespace-nowrap",
               sectionScore > 0 ? "text-blue-600 bg-blue-50" : "text-slate-400 bg-slate-50"
             )}>
               {sectionScore} / {section.maxPoints}
             </span>
           </div>
           <div className={cn(
-            "p-2 rounded-full transition-all",
+            "p-1 md:p-2 rounded-full transition-all shrink-0",
             isExpanded ? "bg-blue-100 text-blue-600 rotate-180" : "bg-slate-100 text-slate-400"
           )}>
-            <ChevronDown size={20} />
+            <ChevronDown size={16} className="md:w-5 md:h-5" />
           </div>
         </div>
       </button>

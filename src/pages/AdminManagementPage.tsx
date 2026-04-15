@@ -8,6 +8,7 @@ import { toast } from 'sonner';
 import { generateStudentEmail } from '../lib/utils';
 
 export default function AdminManagementPage() {
+  const [deletingAdmin, setDeletingAdmin] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'classes' | 'students' | 'periods' | 'system'>('classes');
   const [classes, setClasses] = useState<ClassGroup[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
@@ -62,6 +63,8 @@ export default function AdminManagementPage() {
       setLoading(false);
     }
   };
+
+
 
   const handleSaveStudent = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -125,7 +128,7 @@ export default function AdminManagementPage() {
     if (!passwordStudent || !newPassword) return;
 
     try {
-      await authService.changePassword(passwordStudent.id, newPassword);
+      await adminService.resetStudentPassword(passwordStudent.id, newPassword);
       showToast('success', `Đã đổi mật khẩu cho sinh viên ${passwordStudent.id}`);
       setIsPasswordModalOpen(false);
       setNewPassword('');
@@ -549,7 +552,7 @@ export default function AdminManagementPage() {
 
   const renderPeriods = () => (
     <div className="space-y-4">
-      <div className="flex justify-between items-center">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
         <h2 className="text-xl font-bold text-slate-800">Quản lý đợt chấm điểm</h2>
         <button 
           onClick={() => {
@@ -557,44 +560,58 @@ export default function AdminManagementPage() {
             setPeriodFormData({ name: '', startDate: '', endDate: '' });
             setIsPeriodModalOpen(true);
           }}
-          className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+          className="flex flex-1 sm:flex-none items-center justify-center w-full sm:w-auto gap-2 px-4 py-2 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 transition-colors active:scale-95"
         >
           <Plus size={18} /> Tạo đợt mới
         </button>
       </div>
       <div className="space-y-3">
-        {periods.map(p => (
-          <div key={p.id} className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <div className="p-3 bg-amber-50 text-amber-600 rounded-xl">
-                <Calendar size={24} />
+        {periods.map(p => {
+          const formatDt = (dt: string) => {
+            if (!dt) return '';
+            try { 
+              const d = new Date(dt);
+              return isNaN(d.getTime()) ? dt : d.toLocaleDateString('vi-VN');
+            } catch { return dt; }
+          };
+          
+          return (
+            <div key={p.id} className="bg-white p-3 md:p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-3 md:gap-4">
+              <div className="flex items-start md:items-center gap-3 md:gap-4">
+                <div className="p-2 md:p-3 bg-amber-50 text-amber-600 rounded-lg md:rounded-xl shrink-0 mt-1 md:mt-0">
+                  <Calendar size={20} className="md:w-6 md:h-6" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-900 leading-tight mb-1">{p.name}</h3>
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2 text-[11px] md:text-sm text-slate-500">
+                    <span>Bắt đầu: <span className="font-semibold">{formatDt(p.startDate)}</span></span>
+                    <span className="hidden sm:inline">•</span>
+                    <span>Kết thúc: <span className="font-semibold">{formatDt(p.endDate)}</span></span>
+                  </div>
+                </div>
               </div>
-              <div>
-                <h3 className="font-bold text-slate-900">{p.name}</h3>
-                <p className="text-sm text-slate-500">Bắt đầu: {p.startDate} • Kết thúc: {p.endDate}</p>
-              </div>
-            </div>
-            <div className="flex gap-2">
-              <span className="px-3 py-1 bg-green-100 text-green-700 text-xs font-bold rounded-full flex items-center">Đang diễn ra</span>
-              <button 
-                onClick={() => {
-                  setEditingPeriod(p);
-                  setPeriodFormData(p);
-                  setIsPeriodModalOpen(true);
-                }}
-                className="p-2 text-slate-400 hover:text-blue-600 transition-colors"
-              >
-                <Edit2 size={18} />
-              </button>
+              <div className="flex items-center gap-2 self-end md:self-auto border-t md:border-t-0 border-slate-100 pt-2 md:pt-0 w-full md:w-auto justify-end">
+                <span className="px-2 py-0.5 md:px-3 md:py-1 bg-green-100 text-green-700 text-[10px] md:text-xs font-bold rounded-full flex items-center whitespace-nowrap">Đang diễn ra</span>
+                <button 
+                  onClick={() => {
+                    setEditingPeriod(p);
+                    setPeriodFormData(p);
+                    setIsPeriodModalOpen(true);
+                  }}
+                  className="p-1.5 md:p-2 text-slate-400 hover:text-blue-600 transition-colors"
+                >
+                  <Edit2 size={16} className="md:w-[18px] md:h-[18px]" />
+                </button>
               <button 
                 onClick={() => confirmDeletePeriod(p)}
-                className="p-2 text-slate-400 hover:text-red-600 transition-colors"
+                className="p-1.5 md:p-2 text-slate-400 hover:text-red-600 transition-colors"
               >
-                <Trash2 size={18} />
+                <Trash2 size={16} className="md:w-[18px] md:h-[18px]" />
               </button>
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
@@ -673,6 +690,8 @@ export default function AdminManagementPage() {
         </button>
       </div>
 
+
+
       {/* Custom Delete Modal */}
       {isDeleteModalOpen && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[70] p-4">
@@ -741,6 +760,8 @@ export default function AdminManagementPage() {
           </motion.div>
         </div>
       )}
+
+
     </div>
   );
 

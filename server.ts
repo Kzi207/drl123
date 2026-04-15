@@ -15,8 +15,8 @@ async function startServer() {
 
   app.use(express.json({ limit: "50mb" }));
 
-  const API_BASE = process.env.API_BASE || "https://database.kzii.site";
-  const API_KEY = process.env.API_KEY || ""; 
+  const API_BASE = process.env.VITE_API_BASE || process.env.API_BASE || "http://localhost:3004";
+  const API_KEY = process.env.VITE_API_KEY || process.env.API_KEY || "kzi207-khoaktck-cncd2511"; 
 
   // Proxy API requests
   app.all("/api-proxy/*", async (req, res) => {
@@ -62,16 +62,7 @@ async function startServer() {
 
       // Fallback to old domain if 404 or 503/502
       if (response.status === 404 || response.status === 503 || response.status === 502) {
-        const fallbackUrl = `${FALLBACK_API_BASE}/${targetPath}${queryString}`;
-        console.log(`Fallback proxying to: ${fallbackUrl}`);
-        try {
-          const fallbackResponse = await fetch(fallbackUrl, fetchOptions);
-          console.log(`Fallback proxy response: ${fallbackResponse.status} ${fallbackResponse.statusText}`);
-          response = fallbackResponse;
-        } catch (fallbackError) {
-          console.error("Fallback proxy error:", fallbackError);
-          // Keep the original response if fallback fails
-        }
+        console.log(`Primary failed with ${response.status}, skipping fallback`);
       }
 
       const contentType = response.headers.get("content-type");
@@ -97,6 +88,7 @@ async function startServer() {
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
+      root: __dirname,
       server: { middlewareMode: true },
       appType: "spa",
     });
@@ -114,4 +106,7 @@ async function startServer() {
   });
 }
 
-startServer();
+startServer().catch((error) => {
+  console.error('[SERVER ERROR]', error);
+  process.exit(1);
+});

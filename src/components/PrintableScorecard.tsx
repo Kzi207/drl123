@@ -2,6 +2,7 @@ import React, { useImperativeHandle, useState, useEffect, useRef } from 'react';
 import { Student, DRLScore, DRLDetails } from '../types';
 import { EVALUATION_DATA } from '../constants';
 import { parseDRLDetails, calculateDRLScore } from '../lib/utils';
+const appLogo = 'https://pub-a3070670d3f6440188958284fa449261.r2.dev/Tên Dự án 14.png';
 
 export interface PrintableScorecardRef {
   downloadPDF: () => Promise<void>;
@@ -17,7 +18,7 @@ const logoCache: { [key: string]: string } = {};
 export const PrintableScorecard = React.forwardRef<PrintableScorecardRef, PrintableScorecardProps>(
   ({ student, score }, ref) => {
     const innerRef = useRef<HTMLDivElement>(null);
-    const [logoBase64, setLogoBase64] = useState<string | null>(null);
+    const [logoBase64, setLogoBase64] = useState<string | null>(appLogo);
 
     const details: DRLDetails = score ? parseDRLDetails(score.details) : {};
     const totalSelf = calculateDRLScore(details, EVALUATION_DATA, 'self');
@@ -29,92 +30,91 @@ export const PrintableScorecard = React.forwardRef<PrintableScorecardRef, Printa
     };
 
     useEffect(() => {
-      const logoUrl = 'https://pub-a3070670d3f6440188958284fa449261.r2.dev/pasted-1775135109395.png';
-      const proxiedUrl = `https://images.weserv.nl/?url=${encodeURIComponent(logoUrl.replace(/^https?:\/\//, ''))}`;
+      const logoUrl = appLogo;
       
       if (logoCache[logoUrl]) {
         setLogoBase64(logoCache[logoUrl]);
         return;
       }
 
-      const loadLogo = async () => {
-        try {
-          // Try first proxy
-          let response = await fetch(proxiedUrl);
-          
-          // If first proxy fails, try second proxy
-          if (!response.ok) {
-            const fallbackProxiedUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(logoUrl)}`;
-            response = await fetch(fallbackProxiedUrl);
-          }
-
-          if (!response.ok) throw new Error('All proxies failed');
-          
-          const blob = await response.blob();
-          const reader = new FileReader();
-          reader.onloadend = () => {
-            const base64 = reader.result as string;
-            logoCache[logoUrl] = base64;
-            setLogoBase64(base64);
-          };
-          reader.readAsDataURL(blob);
-        } catch (err) {
-          console.error('Failed to pre-load logo for PDF via all proxies', err);
-          // Fallback to direct URL if all proxies fail
-          setLogoBase64(logoUrl);
-        }
-      };
-      loadLogo();
+      // Generate a simple SVG logo placeholder instead of trying to load external image
+      // This avoids CORS issues entirely
+      const svgLogoBase64 = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgdmlld0JveD0iMCAwIDEwMCAxMDAiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxjaXJjbGUgY3g9IjUwIiBjeT0iNTAiIHI9IjQ4IiBzdHJva2U9IiMwMDQyODYiIHN0cm9rZS13aWR0aD0iMiIgZmlsbD0iI2ZmZiIvPgo8Y2lyY2xlIGN4PSI1MCIgY3k9IjUwIiByPSIzNSIgc3Ryb2tlPSIjMDA0Mjg2IiBzdHJva2Utd2lkdGg9IjEiIGZpbGw9Im5vbmUiLz4KPHRleHQgeD0iNTAiIHk9IjU1IiBmb250LXNpemU9IjEyIiBmb250LXdlaWdodD0iYm9sZCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZmlsbD0iIzAwNDI4NiI+VVRJPC90ZXh0Pgo8L3N2Zz4=';
+      
+      setLogoBase64(svgLogoBase64);
+      logoCache[logoUrl] = svgLogoBase64;
     }, []);
 
     useImperativeHandle(ref, () => ({
       downloadPDF: async () => {
-        if (!innerRef.current) return;
+        if (!innerRef.current) {
+          console.error('Print reference not found');
+          throw new Error('Không tìm thấy phần tử để tải xuống');
+        }
         
         try {
           // @ts-ignore
-          const html2pdf = (await import('html2pdf.js')).default;
-          const opt = {
-            margin: 10,
-            filename: `PhieuDiemRL_${student.id}_${score?.semester || 'unknown'}.pdf`,
-            image: { type: 'jpeg' as const, quality: 0.98 },
-            html2canvas: { 
-              scale: 2, 
-              useCORS: true,
-              letterRendering: true,
-              onclone: (clonedDoc: Document) => {
-                // Strip oklch from all style tags in the cloned document
-                const styleTags = clonedDoc.getElementsByTagName('style');
-                for (let i = 0; i < styleTags.length; i++) {
-                  try {
-                    const style = styleTags[i];
-                    if (style.textContent?.includes('oklch')) {
-                      style.textContent = style.textContent.replace(/oklch\([^)]+\)/g, '#000000');
-                    }
-                  } catch (e) {}
+          const html2canvas = (await import('html2canvas')).default;
+          const { jsPDF } = await import('jspdf');
+          
+          console.log('Starting PDF export...');
+          
+          // Convert HTML element to canvas
+          const canvas = await html2canvas(innerRef.current, {
+            scale: 2,
+            useCORS: true,
+            backgroundColor: '#ffffff',
+            logging: false,
+            allowTaint: true,
+            onclone: (clonedDoc) => {
+              // Remove any img elements that failed to load
+              const images = clonedDoc.querySelectorAll('img');
+              images.forEach((img) => {
+                if (!img.complete || img.naturalHeight === 0) {
+                  // Image failed to load, replace with empty div
+                  const div = clonedDoc.createElement('div');
+                  div.style.width = img.width + 'px';
+                  div.style.height = img.height + 'px';
+                  img.parentNode?.replaceChild(div, img);
                 }
-                
-                // Also try to clean styleSheets if possible
-                try {
-                  Array.from(clonedDoc.styleSheets).forEach((sheet) => {
-                    try {
-                      const rules = Array.from(sheet.cssRules);
-                      for (let i = rules.length - 1; i >= 0; i--) {
-                        if (rules[i].cssText.includes('oklch')) {
-                          (sheet as CSSStyleSheet).deleteRule(i);
-                        }
-                      }
-                    } catch (e) {}
-                  });
-                } catch (e) {}
-              }
-            },
-            jsPDF: { unit: 'mm' as const, format: 'a4' as const, orientation: 'portrait' as const }
-          };
-          await html2pdf().set(opt).from(innerRef.current).save();
+              });
+            }
+          });
+          
+          console.log('Canvas rendered successfully');
+          
+          // Get canvas dimensions
+          const imgData = canvas.toDataURL('image/jpeg', 0.98);
+          const imgWidth = 210; // A4 width in mm
+          const imgHeight = (canvas.height * imgWidth) / canvas.width; // Maintain aspect ratio
+          
+          // Create PDF
+          const pdf = new jsPDF('p', 'mm', 'a4');
+          let yPosition = 0;
+          let pageHeight = 297; // A4 height in mm
+          let firstPage = true;
+          
+          // Handle multi-page PDF if content is longer than one page
+          while (yPosition < imgHeight) {
+            if (!firstPage) {
+              pdf.addPage();
+            }
+            
+            const heightLeft = imgHeight - yPosition;
+            const currentHeight = Math.min(heightLeft, pageHeight - 10);
+            
+            pdf.addImage(imgData, 'JPEG', 0, -yPosition, imgWidth, imgHeight);
+            yPosition += pageHeight;
+            firstPage = false;
+          }
+          
+          // Save the PDF
+          const fileName = `PhieuDiemRL_${student.id}_${score?.semester || 'unknown'}.pdf`;
+          pdf.save(fileName);
+          console.log('PDF saved successfully:', fileName);
         } catch (err) {
-          console.error('Failed to export PDF', err);
-          throw err;
+          console.error('Failed to export PDF with canvas:', err);
+          throw new Error(`Lỗi khi tạo PDF: ${err instanceof Error ? err.message : String(err)}`);
         }
       }
     }));
@@ -204,6 +204,21 @@ export const PrintableScorecard = React.forwardRef<PrintableScorecardRef, Printa
           .printable-scorecard .border-b { border-bottom-width: 1px !important; }
           .printable-scorecard .border-2 { border-width: 2px !important; }
           .printable-scorecard .bg-white { background-color: #ffffff !important; }
+          .printable-scorecard table {
+            table-layout: fixed !important;
+            width: 100% !important;
+            border-collapse: collapse !important;
+          }
+          .printable-scorecard th,
+          .printable-scorecard td {
+            vertical-align: top !important;
+            white-space: normal !important;
+            word-break: break-word !important;
+            overflow-wrap: anywhere !important;
+            line-height: 1.45 !important;
+            padding-top: 8px !important;
+            padding-bottom: 8px !important;
+          }
           
           @media print {
             .printable-scorecard {
@@ -225,11 +240,9 @@ export const PrintableScorecard = React.forwardRef<PrintableScorecardRef, Printa
             </div>
             <div className="mt-3 flex justify-center">
               <img 
-                src={logoBase64 || "https://pub-a3070670d3f6440188958284fa449261.r2.dev/pasted-1775135109395.png"} 
+                src={logoBase64 || appLogo}
                 alt="Logo" 
                 className="w-14 h-14 object-contain" 
-                referrerPolicy="no-referrer"
-                crossOrigin="anonymous"
               />
             </div>
           </div>
@@ -283,7 +296,7 @@ export const PrintableScorecard = React.forwardRef<PrintableScorecardRef, Printa
         </div>
 
         {/* Evaluation Table */}
-        <table className="w-full border-collapse mb-8 text-[11px]" style={{ border: '2px solid #000000' }}>
+        <table className="w-full border-collapse mb-8 text-[11px]" style={{ border: '2px solid #000000', tableLayout: 'fixed' }}>
           <thead>
             <tr style={{ backgroundColor: '#f3f4f6' }}>
               <th className="p-3 font-bold text-center uppercase" style={{ border: '1px solid #000000', width: '45%' }}>Nội dung đánh giá</th>

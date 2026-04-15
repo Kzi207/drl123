@@ -10,8 +10,7 @@ import { PrintableScorecard, PrintableScorecardRef } from '../components/Printab
 import ImageLightbox from '../components/ImageLightbox';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
-// @ts-ignore
-import html2pdf from 'html2pdf.js';
+import { jsPDF } from 'jspdf';
 import { AdminScoreList } from '../components/AdminScoreList';
 import { AdminScoreDetail } from '../components/AdminScoreDetail';
 
@@ -55,63 +54,66 @@ export default function AdminApprovalPage() {
     const element = printRef.current;
     if (!element) {
       setExportingAllPDF(false);
+      toast.error('Không tìm thấy phần tử để xuất');
       return;
     }
 
-    const opt = {
-      margin: 10,
-      filename: `DanhSachPhieuDiem_${filterClass === 'all' ? 'TatCa' : filterClass}.pdf`,
-      image: { type: 'jpeg' as const, quality: 0.98 },
-      html2canvas: { 
-        scale: 2, 
-        useCORS: true,
-        letterRendering: true,
-        scrollX: 0,
-        scrollY: 0,
-        onclone: (clonedDoc: Document) => {
-          // Ensure the cloned element is visible for capture
-          const el = clonedDoc.getElementById('printable-all-container');
-          if (el) {
-            el.style.opacity = '1';
-            el.style.position = 'static';
-            el.style.left = '0';
-          }
-
-          // Strip oklch from all style tags in the cloned document
-          const styleTags = clonedDoc.getElementsByTagName('style');
-          for (let i = 0; i < styleTags.length; i++) {
-            try {
-              const style = styleTags[i];
-              if (style.textContent?.includes('oklch')) {
-                style.textContent = style.textContent.replace(/oklch\([^)]+\)/g, '#000000');
-              }
-            } catch (e) {}
-          }
-
-          // Also try to clean styleSheets if possible
-          try {
-            Array.from(clonedDoc.styleSheets).forEach((sheet) => {
-              try {
-                const rules = Array.from(sheet.cssRules);
-                for (let i = rules.length - 1; i >= 0; i--) {
-                  if (rules[i].cssText.includes('oklch')) {
-                    (sheet as CSSStyleSheet).deleteRule(i);
-                  }
-                }
-              } catch (e) {}
-            });
-          } catch (e) {}
-        }
-      },
-      jsPDF: { unit: 'mm' as const, format: 'a4' as const, orientation: 'portrait' as const }
-    };
-
     try {
-      await html2pdf().set(opt).from(element).save();
+      // @ts-ignore
+      const html2canvas = (await import('html2canvas')).default;
+      
+      // Convert HTML element to canvas
+      const canvas = await html2canvas(element, {
+        scale: 2,
+        useCORS: true,
+        backgroundColor: '#ffffff',
+        logging: false,
+        allowTaint: true,
+        onclone: (clonedDoc) => {
+          // Remove any img elements that failed to load
+          const images = clonedDoc.querySelectorAll('img');
+          images.forEach((img) => {
+            if (!img.complete || img.naturalHeight === 0) {
+              const div = clonedDoc.createElement('div');
+              div.style.width = img.width + 'px';
+              div.style.height = img.height + 'px';
+              img.parentNode?.replaceChild(div, img);
+            }
+          });
+        }
+      });
+      
+      // Get canvas dimensions
+      const imgData = canvas.toDataURL('image/jpeg', 0.98);
+      const imgWidth = 210; // A4 width in mm
+      const imgHeight = (canvas.height * imgWidth) / canvas.width; // Maintain aspect ratio
+      
+      // Create PDF
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      let yPosition = 0;
+      let pageHeight = 297; // A4 height in mm
+      let firstPage = true;
+      
+      // Handle multi-page PDF if content is longer than one page
+      while (yPosition < imgHeight) {
+        if (!firstPage) {
+          pdf.addPage();
+        }
+        
+        const heightLeft = imgHeight - yPosition;
+        const currentHeight = Math.min(heightLeft, pageHeight - 10);
+        
+        pdf.addImage(imgData, 'JPEG', 0, -yPosition, imgWidth, imgHeight);
+        yPosition += pageHeight;
+        firstPage = false;
+      }
+      
+      // Save the PDF
+      pdf.save(`DanhSachPhieuDiem_${filterClass === 'all' ? 'TatCa' : filterClass}.pdf`);
       toast.success('Đã tải xuống danh sách phiếu điểm');
     } catch (err) {
-      console.error('All PDF export failed', err);
-      toast.error('Không thể xuất danh sách PDF');
+      console.error('All PDF export with canvas failed', err);
+      toast.error(`Không thể xuất danh sách PDF: ${err instanceof Error ? err.message : 'Lỗi không xác định'}`);
     } finally {
       setExportingAllPDF(false);
     }
@@ -205,46 +207,62 @@ export default function AdminApprovalPage() {
       // 1. Generate PDF
       const element = document.getElementById(`printable-card-${item.student.id}`);
       if (element) {
-        const opt = {
-          margin: 0,
-          filename: `PhieuDiem_${item.student.id}.pdf`,
-          image: { type: 'jpeg' as const, quality: 0.98 },
-          html2canvas: { 
-            scale: 2, 
-            useCORS: true, 
-            letterRendering: true,
-            onclone: (clonedDoc: Document) => {
-              // Strip oklch from all style tags in the cloned document
-              const styleTags = clonedDoc.getElementsByTagName('style');
-              for (let i = 0; i < styleTags.length; i++) {
-                try {
-                  const style = styleTags[i];
-                  if (style.textContent?.includes('oklch')) {
-                    style.textContent = style.textContent.replace(/oklch\([^)]+\)/g, '#000000');
-                  }
-                } catch (e) {}
-              }
-
-              // Also try to clean styleSheets if possible
-              try {
-                Array.from(clonedDoc.styleSheets).forEach((sheet) => {
-                  try {
-                    const rules = Array.from(sheet.cssRules);
-                    for (let i = rules.length - 1; i >= 0; i--) {
-                      if (rules[i].cssText.includes('oklch')) {
-                        (sheet as CSSStyleSheet).deleteRule(i);
-                      }
-                    }
-                  } catch (e) {}
-                });
-              } catch (e) {}
+        try {
+          // @ts-ignore
+          const html2canvas = (await import('html2canvas')).default;
+          
+          // Convert HTML element to canvas
+          const canvas = await html2canvas(element, {
+            scale: 2,
+            useCORS: true,
+            backgroundColor: '#ffffff',
+            logging: false,
+            allowTaint: true,
+            onclone: (clonedDoc) => {
+              // Remove any img elements that failed to load
+              const images = clonedDoc.querySelectorAll('img');
+              images.forEach((img) => {
+                if (!img.complete || img.naturalHeight === 0) {
+                  const div = clonedDoc.createElement('div');
+                  div.style.width = img.width + 'px';
+                  div.style.height = img.height + 'px';
+                  img.parentNode?.replaceChild(div, img);
+                }
+              });
             }
-          },
-          jsPDF: { unit: 'mm' as const, format: 'a4' as const, orientation: 'portrait' as const }
-        };
-        
-        const pdfBlob = await html2pdf().set(opt).from(element).output('blob');
-        studentFolder.file(`PhieuDiem_${item.student.id}.pdf`, pdfBlob);
+          });
+          
+          // Get canvas dimensions
+          const imgData = canvas.toDataURL('image/jpeg', 0.98);
+          const imgWidth = 210; // A4 width in mm
+          const imgHeight = (canvas.height * imgWidth) / canvas.width; // Maintain aspect ratio
+          
+          // Create PDF
+          const pdf = new jsPDF('p', 'mm', 'a4');
+          let yPosition = 0;
+          let pageHeight = 297; // A4 height in mm
+          let firstPage = true;
+          
+          // Handle multi-page PDF if content is longer than one page
+          while (yPosition < imgHeight) {
+            if (!firstPage) {
+              pdf.addPage();
+            }
+            
+            const heightLeft = imgHeight - yPosition;
+            const currentHeight = Math.min(heightLeft, pageHeight - 10);
+            
+            pdf.addImage(imgData, 'JPEG', 0, -yPosition, imgWidth, imgHeight);
+            yPosition += pageHeight;
+            firstPage = false;
+          }
+          
+          // Get PDF as blob
+          const pdfBlob = pdf.output('blob');
+          studentFolder.file(`PhieuDiem_${item.student.id}.pdf`, pdfBlob);
+        } catch (err) {
+          console.error(`Failed to generate PDF for ${item.student.id}`, err);
+        }
       }
 
       // 2. Add Proofs
@@ -291,7 +309,7 @@ export default function AdminApprovalPage() {
             const currentDetails = parseDRLDetails(selectedScore.details);
             let hasChanges = false;
 
-            Object.entries(proofsRes.proofs).forEach(([critId, urls]) => {
+            Object.entries(proofsRes.proofs as Record<string, string[]>).forEach(([critId, urls]) => {
               if (!currentDetails[critId] || typeof currentDetails[critId] !== 'object') {
                 currentDetails[critId] = { self: 0, class: 0, proofs: [] };
               }
@@ -360,7 +378,7 @@ export default function AdminApprovalPage() {
     setRefreshing(true);
     try {
       const [scoresRes, studentsRes, periodsRes] = await Promise.all([
-        drlService.getScores(),
+        drlService.getScores(undefined, undefined, 1000),
         studentService.getAll(),
         drlService.getPeriods()
       ]);
@@ -527,10 +545,138 @@ export default function AdminApprovalPage() {
         }
         return [...prev, mergedSaved];
       });
+      
+      // Send approval email to student
+      const student = students[selectedScore.studentId];
+      if (student && student.email) {
+        // Count rejected criteria: where student's self score > 0 but class score = 0
+        let rejectedCount = 0;
+        let totalCriteria = 0;
+        
+        Object.values(details).forEach(item => {
+          if (item && typeof item === 'object' && 'self' in item && 'class' in item) {
+            totalCriteria++;
+            if (item.self > 0 && item.class === 0) {
+              rejectedCount++;
+            }
+          }
+        });
+
+        try {
+          const activePeriod = periods.find(p => p.id === selectedPeriod);
+          const criteriaForExport = EVALUATION_DATA.flatMap(section =>
+            section.criteria.map(criterion => ({
+              id: criterion.id,
+              content: criterion.content,
+              sectionTitle: section.title,
+              maxPoints: criterion.maxPoints,
+            }))
+          );
+          await drlService.sendApprovalEmail(
+            student.email,
+            `${student.lastName} ${student.firstName}`,
+            rejectedCount,
+            totalCriteria,
+            student.id,
+            activePeriod?.name || selectedPeriod,
+            student.classId,
+            '',
+            localStorage.getItem('drl_admin_username') || 'BCH Chi đoàn',
+            activePeriod?.endDate || '',
+            {
+              details,
+              selfScore: calculateDRLScore(details, EVALUATION_DATA, 'self'),
+              classScore: classTotal,
+              finalScore: classTotal,
+              status: 'finalized',
+              criteria: criteriaForExport,
+            }
+          );
+          toast.success('Đã lưu kết quả duyệt và gửi email thông báo!');
+        } catch (emailErr) {
+          console.error('Failed to send approval email', emailErr);
+          toast.success('Đã lưu kết quả duyệt nhưng gửi email thất bại. Vui lòng thử lại.');
+        }
+      } else {
+        toast.success('Đã lưu kết quả duyệt và hoàn tất phiếu!');
+      }
+      
       setSelectedScore(null);
-      toast.success('Đã lưu kết quả duyệt và hoàn tất phiếu!');
     } catch (err) {
       toast.error('Duyệt thất bại');
+    }
+  };
+
+  const handleReject = async (feedback: string) => {
+    if (!selectedScore) return;
+    try {
+      const updatedScore: DRLScore = {
+        ...selectedScore,
+        id: selectedScore.id === 'unsubmitted' ? '' : (selectedScore.id || ''),
+        status: 'rejected',
+        rejectionFeedback: feedback,
+        rejectedAt: new Date().toISOString(),
+        updatedAt: selectedScore.updatedAt || null
+      };
+      const saved = await drlService.saveScore(updatedScore);
+
+      const mergedSaved: DRLScore = {
+        ...updatedScore,
+        ...(saved as any),
+        details: (saved as any)?.details ?? updatedScore.details,
+      };
+      setScores(prev => {
+        const exists = prev.find(s => s.studentId === selectedScore.studentId && s.semester === selectedPeriod);
+        if (exists) {
+          return prev.map(s => s.studentId === selectedScore.studentId && s.semester === selectedPeriod ? mergedSaved : s);
+        }
+        return [...prev, mergedSaved];
+      });
+
+      // Send rejection email to student
+      const student = students[selectedScore.studentId];
+      if (student && student.email) {
+        try {
+          const activePeriod = periods.find(p => p.id === selectedPeriod);
+          const details: DRLDetails = parseDRLDetails(updatedScore.details);
+          const criteriaForExport = EVALUATION_DATA.flatMap(section =>
+            section.criteria.map(criterion => ({
+              id: criterion.id,
+              content: criterion.content,
+              sectionTitle: section.title,
+              maxPoints: criterion.maxPoints,
+            }))
+          );
+          await drlService.sendApprovalEmail(
+            student.email,
+            `${student.lastName} ${student.firstName}`,
+            1, // Trigger rejection logic locally or passed count
+            0,
+            student.id,
+            activePeriod?.name || selectedPeriod,
+            student.classId,
+            feedback,
+            localStorage.getItem('drl_admin_username') || 'BCH Chi đoàn',
+            activePeriod?.endDate || '',
+            {
+              details,
+              selfScore: calculateDRLScore(details, EVALUATION_DATA, 'self'),
+              classScore: calculateDRLScore(details, EVALUATION_DATA, 'class'),
+              finalScore: calculateDRLScore(details, EVALUATION_DATA, 'class'),
+              status: 'rejected',
+              criteria: criteriaForExport,
+            }
+          );
+        } catch (emailErr) {
+          console.error('Failed to send rejection email', emailErr);
+        }
+      }
+
+      setSelectedScore(null);
+      toast.success('Đã từ chối phiếu điểm. Sinh viên sẽ được thông báo qua email để chỉnh sửa.');
+    } catch (err) {
+      toast.error('Từ chối thất bại');
+      throw err;
     }
   };
 
@@ -564,70 +710,61 @@ export default function AdminApprovalPage() {
 
   const exportDetailedExcel = (student: Student, score: DRLScore) => {
     const details = parseDRLDetails(score.details);
-    const excelData: any[] = [];
-    
-    // Add student info
-    excelData.push({ 'Tên mục': 'Họ và tên:', 'Tự chấm': `${student.lastName} ${student.firstName}`, 'Lớp chấm': '' });
-    excelData.push({ 'Tên mục': 'MSSV:', 'Tự chấm': student.id, 'Lớp chấm': '' });
-    excelData.push({ 'Tên mục': 'Lớp:', 'Tự chấm': student.classId || '', 'Lớp chấm': '' });
-    excelData.push({}); // Empty row
+    const fullName = `${student.lastName || ''} ${student.firstName || ''}`.trim() || student.id;
+    const totalSelf = calculateDRLScore(details, EVALUATION_DATA, 'self');
+    const totalClass = calculateDRLScore(details, EVALUATION_DATA, 'class');
 
-    // Add header row
-    excelData.push({
-      'Tên mục': 'Nội dung đánh giá',
-      'Tự chấm': 'Tự chấm',
-      'Lớp chấm': 'Lớp chấm'
-    });
+    const summarySheet = XLSX.utils.aoa_to_sheet([
+      ['PHIẾU ĐIỂM RÈN LUYỆN'],
+      [],
+      ['Họ và tên', fullName],
+      ['MSSV', student.id],
+      ['Lớp', student.classId || ''],
+      ['Học kỳ', score.semester || selectedPeriod || ''],
+      ['Trạng thái', score.status || 'draft'],
+      ['Điểm tự chấm', totalSelf],
+      ['Điểm lớp chấm', totalClass],
+      ['Điểm cuối', Number(score.finalScore) || totalClass],
+      ['Tổng số mục', EVALUATION_DATA.reduce((sum, sec) => sum + sec.criteria.length, 0)],
+      ['Mục cần chỉnh sửa', EVALUATION_DATA.reduce((count, sec) => count + sec.criteria.filter(crit => (details[crit.id]?.self || 0) > 0 && (details[crit.id]?.class || 0) === 0).length, 0)],
+      ['Người duyệt', localStorage.getItem('drl_admin_username') || 'BCH Chi đoàn'],
+      ['Phản hồi BCH', score.rejectionFeedback || ''],
+      ['Ngày xuất', new Date().toLocaleString('vi-VN')]
+    ]);
+    summarySheet['!cols'] = [{ wch: 24 }, { wch: 70 }];
 
-    EVALUATION_DATA.forEach(section => {
-      // Add section row
-      excelData.push({
-        'Tên mục': section.title.toUpperCase(),
-        'Tự chấm': '',
-        'Lớp chấm': ''
-      });
+    const detailRows = EVALUATION_DATA.flatMap(section =>
+      section.criteria.map(crit => ({
+        'Mã tiêu chí': crit.id,
+        'Mục đánh giá': section.title,
+        'Nội dung': crit.content,
+        'Điểm tối đa': crit.maxPoints,
+        'SV tự chấm': details[crit.id]?.self || 0,
+        'Lớp chấm': details[crit.id]?.class || 0,
+        'Chênh lệch': (details[crit.id]?.class || 0) - (details[crit.id]?.self || 0),
+        'Số minh chứng': Array.isArray(details[crit.id]?.proofs) ? details[crit.id].proofs.length : 0,
+        'Danh sách minh chứng': Array.isArray(details[crit.id]?.proofs) ? details[crit.id].proofs.join('\n') : ''
+      }))
+    );
 
-      section.criteria.forEach(crit => {
-        excelData.push({
-          'Tên mục': crit.content,
-          'Tự chấm': details[crit.id]?.self || 0,
-          'Lớp chấm': details[crit.id]?.class || 0
-        });
-      });
-      
-      // Add section total
-      const sectionScoreSelf = section.criteria.reduce((sum, crit) => sum + (details[crit.id]?.self || 0), 0);
-      const sectionScoreClass = section.criteria.reduce((sum, crit) => sum + (details[crit.id]?.class || 0), 0);
-
-      excelData.push({
-        'Tên mục': `Cộng mục ${section.id.split('-')[1]}`,
-        'Tự chấm': Math.min(sectionScoreSelf, section.maxPoints),
-        'Lớp chấm': Math.min(sectionScoreClass, section.maxPoints)
-      });
-      
-      // Add empty row for spacing
-      excelData.push({});
-    });
-
-    // Add total score
-    excelData.push({
-      'Tên mục': 'TỔNG ĐIỂM RÈN LUYỆN',
-      'Tự chấm': calculateDRLScore(details, EVALUATION_DATA, 'self'),
-      'Lớp chấm': calculateDRLScore(details, EVALUATION_DATA, 'class')
-    });
-
-    const ws = XLSX.utils.json_to_sheet(excelData, { skipHeader: true });
+    const ws = XLSX.utils.json_to_sheet(detailRows);
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "PhieuDiemChiTiet");
+    XLSX.utils.book_append_sheet(wb, summarySheet, 'PhieuDiemRL');
+    XLSX.utils.book_append_sheet(wb, ws, 'ChiTietTieuChi');
     
-    // Set column widths
     ws['!cols'] = [
-      { wch: 80 }, // Content
-      { wch: 15 }, // Self
-      { wch: 15 }  // Class
+      { wch: 14 },
+      { wch: 34 },
+      { wch: 70 },
+      { wch: 12 },
+      { wch: 12 },
+      { wch: 12 },
+      { wch: 12 },
+      { wch: 14 },
+      { wch: 80 }
     ];
 
-    XLSX.writeFile(wb, `PhieuDiemChiTiet_${student.id}.xlsx`);
+    XLSX.writeFile(wb, `PhieuDiemRL_${student.id}_${score.semester || selectedPeriod || 'unknown'}.xlsx`);
   };
 
   if (loading) return <div className="p-8 text-center">Đang tải dữ liệu...</div>;
@@ -670,13 +807,14 @@ export default function AdminApprovalPage() {
             onApproveItem={handleApproveItem}
             onClassScoreChange={handleClassScoreChange}
             onSave={saveApproval}
+            onReject={handleReject}
             onExportExcel={() => exportDetailedExcel(students[selectedScore.studentId], selectedScore)}
             onImageClick={handleImageClick}
           />
         )}
       </AnimatePresence>
 
-      <div className="absolute top-0 left-0 opacity-0 pointer-events-none z-[-1]" style={{ width: '210mm' }}>
+      <div className="absolute top-0 pointer-events-none z-[-1]" style={{ width: '210mm', left: '-10000px' }}>
         <div ref={printRef} id="printable-all-container">
           {filteredItems.map(item => (
             <div key={item.student.id} id={`printable-card-${item.student.id}`}>

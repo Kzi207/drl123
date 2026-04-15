@@ -12,6 +12,7 @@ import { PrintableScorecard, PrintableScorecardRef } from '../components/Printab
 import ImageLightbox from '../components/ImageLightbox';
 import { EvaluationSection } from '../components/EvaluationSection';
 import { EvaluationSummary } from '../components/EvaluationSummary';
+import { RejectionNotification } from '../components/RejectionNotification';
 
 export default function EvaluationPage() {
   const { user } = useAuth();
@@ -19,6 +20,9 @@ export default function EvaluationPage() {
   const detailsRef = useRef<DRLDetails>({});
   const [scoreId, setScoreId] = useState<string | null>(null);
   const [scoreStatus, setScoreStatus] = useState<DRLScore['status']>('draft');
+  const [rejectionFeedback, setRejectionFeedback] = useState<string | null>(null);
+  const [rejectedAt, setRejectedAt] = useState<string | null>(null);
+  const [submissionAttempt, setSubmissionAttempt] = useState(1);
   const [periods, setPeriods] = useState<any[]>([]);
   const [selectedPeriod, setSelectedPeriod] = useState<string>('HK2-2023-2024');
   const [loading, setLoading] = useState(true);
@@ -103,10 +107,16 @@ export default function EvaluationPage() {
       if (myScore) {
         setScoreId(myScore.id || null);
         setScoreStatus(myScore.status || 'draft');
+        setRejectionFeedback(myScore.rejectionFeedback || null);
+        setRejectedAt(myScore.rejectedAt || null);
+        setSubmissionAttempt(myScore.submissionAttempt || 1);
         initialDetails = parseDRLDetails(myScore.details);
       } else {
         setScoreId(null);
         setScoreStatus('draft');
+        setRejectionFeedback(null);
+        setRejectedAt(null);
+        setSubmissionAttempt(1);
         // Initialize empty details
         EVALUATION_DATA.forEach(sec => {
           sec.criteria.forEach(crit => {
@@ -117,7 +127,7 @@ export default function EvaluationPage() {
 
       // Merge proofs from getProofs API if available
       if (proofsRes.success && proofsRes.proofs) {
-        Object.entries(proofsRes.proofs).forEach(([critId, urls]) => {
+        Object.entries(proofsRes.proofs as Record<string, string[]>).forEach(([critId, urls]) => {
           // Ensure the entry exists and is an object before setting proofs
           if (!initialDetails[critId] || typeof initialDetails[critId] !== 'object') {
             initialDetails[critId] = { self: 0, class: 0, proofs: [] };
@@ -238,6 +248,10 @@ export default function EvaluationPage() {
     const detailsToSave = customDetails || details;
     setSaving(true);
     try {
+      // When resubmitting after rejection, increment submission_attempt and clear rejection feedback
+      const isResubmitting = scoreStatus === 'rejected' && status === 'submitted';
+      const newSubmissionAttempt = isResubmitting ? (submissionAttempt || 1) + 1 : submissionAttempt;
+
       const score: DRLScore = {
         id: scoreId || '',
         studentId: user?.username || '',
@@ -248,14 +262,29 @@ export default function EvaluationPage() {
         finalScore: 0,
         details: JSON.stringify(detailsToSave),
         status,
+        submissionAttempt: newSubmissionAttempt,
+        rejectionFeedback: isResubmitting ? null : rejectionFeedback,
         updatedAt: null
       };
-      const savedScore = await drlService.saveScore(score);
+      let savedScore;
+      if (!score.id) {
+        savedScore = await drlService.submitScore(score);
+      } else {
+        // If it already has an ID, use submitScore as well because POST /drl_scores handles upsert
+        savedScore = await drlService.submitScore(score);
+      }
+      
       if (savedScore && savedScore.id) {
         setScoreId(savedScore.id);
       }
 
+      // Update state after successful save
       setScoreStatus(status);
+      if (isResubmitting) {
+        setRejectionFeedback(null);
+        setRejectedAt(null);
+        setSubmissionAttempt(newSubmissionAttempt);
+      }
       
       // Clear local draft on successful server save
       const draftKey = `drl_draft_${user?.username}_${selectedPeriod}`;
@@ -264,18 +293,32 @@ export default function EvaluationPage() {
       setLastSaved(new Date());
 
       if (!customDetails) {
-        toast.success(status === 'submitted' ? 'Đã gửi phiếu điểm thành công' : 'Đã lưu bản nháp');
+        if (isResubmitting) {
+          toast.success(`Đã nộp lại phiếu điểm (lần ${newSubmissionAttempt})`);
+        } else {
+          toast.success(status === 'submitted' ? 'Đã gửi phiếu điểm thành công' : 'Đã lưu bản nháp');
+        }
       }
     } catch (err: any) {
       console.error('Save failed', err);
       
-      // Check for period time validation errors from backend
-      if (err?.code === 'NOT_STARTED' || err?.message?.includes('Chưa đến thời gian')) {
-        toast.error(err?.message || 'Chưa đến thời gian chấm. Vui lòng chờ đến ngày bắt đầu của đợt chấm.');
-      } else if (err?.code === 'EXPIRED' || err?.message?.includes('Đã hết hạn')) {
-        toast.error(err?.message || 'Đợt chấm đã kết thúc. Vui lòng liên hệ quản trị viên để nộp muộn.');
+      const errMsg: string = err?.message || '';
+      const errCode: string = err?.code || '';
+
+      // Show the exact server error message if available
+      if (errCode === 'NOT_STARTED' || errMsg.includes('Chưa đến thời gian')) {
+        toast.error(errMsg || 'Chưa đến thời gian chấm. Vui lòng chờ đến ngày bắt đầu của đợt chấm.');
+      } else if (errCode === 'EXPIRED' || errMsg.includes('Đã hết hạn')) {
+        toast.error(errMsg || 'Đợt chấm đã kết thúc. Vui lòng liên hệ quản trị viên để nộp muộn.');
+      } else if (errMsg.includes('Sinh viên không tồn tại')) {
+        toast.error(errMsg);
+      } else if (errMsg.includes('Kỳ học không tồn tại')) {
+        toast.error(errMsg);
+      } else if (errMsg && !errMsg.startsWith('API Error:')) {
+        // Show any server-provided error message directly
+        toast.error(errMsg);
       } else {
-        toast.error('Lưu thất bại. Vui lòng kiểm tra kết nối mạng.');
+        toast.error('Lưu thất bại. Vui lòng kiểm tra kết nối mạng và thử lại.');
       }
       throw err;
     } finally {
@@ -532,67 +575,57 @@ export default function EvaluationPage() {
     if (!user) return;
     setExporting(true);
     try {
-      const excelData: any[] = [];
-      
-      // Add student info
-      excelData.push({ 'Tên mục': 'Họ và tên:', 'Tự chấm': `${user.lastName} ${user.firstName}`, 'Lớp chấm': '' });
-      excelData.push({ 'Tên mục': 'MSSV:', 'Tự chấm': user.username, 'Lớp chấm': '' });
-      excelData.push({ 'Tên mục': 'Lớp:', 'Tự chấm': user.classId || '', 'Lớp chấm': '' });
-      excelData.push({}); // Empty row
+      const fullName = `${(user as any).lastName || ''} ${(user as any).firstName || ''}`.trim() || user.name || user.username;
+      const studentId = user.mssv || user.username;
 
-      // Add header row
-      excelData.push({
-        'Tên mục': 'Nội dung đánh giá',
-        'Tự chấm': 'Tự chấm',
-        'Lớp chấm': 'Lớp chấm'
-      });
+      const summarySheet = XLSX.utils.aoa_to_sheet([
+        ['PHIẾU ĐIỂM RÈN LUYỆN'],
+        [],
+        ['Họ và tên', fullName],
+        ['MSSV', studentId],
+        ['Lớp', user.classId || ''],
+        ['Học kỳ', selectedPeriod || ''],
+        ['Trạng thái', scoreStatus || 'draft'],
+        ['Điểm tự chấm', calculateDRLScore(details, EVALUATION_DATA, 'self')],
+        ['Điểm lớp chấm', calculateDRLScore(details, EVALUATION_DATA, 'class')],
+        ['Điểm cuối', calculateDRLScore(details, EVALUATION_DATA, 'class')],
+        ['Ngày xuất', new Date().toLocaleString('vi-VN')]
+      ]);
 
-      EVALUATION_DATA.forEach(section => {
-        // Add section row
-        excelData.push({
-          'Tên mục': section.title.toUpperCase(),
-          'Tự chấm': '',
-          'Lớp chấm': ''
-        });
+      summarySheet['!cols'] = [{ wch: 24 }, { wch: 70 }];
 
-        section.criteria.forEach(crit => {
-          excelData.push({
-            'Tên mục': crit.content,
-            'Tự chấm': details[crit.id]?.self || 0,
-            'Lớp chấm': details[crit.id]?.class || 0
-          });
-        });
-        
-        // Add section total
-        excelData.push({
-          'Tên mục': `Cộng mục ${section.id.split('-')[1]}`,
-          'Tự chấm': calculateDRLScore(details, [section], 'self'),
-          'Lớp chấm': calculateDRLScore(details, [section], 'class')
-        });
-        
-        // Add empty row for spacing
-        excelData.push({});
-      });
+      const detailRows = EVALUATION_DATA.flatMap(section =>
+        section.criteria.map(crit => ({
+          'Mã tiêu chí': crit.id,
+          'Mục đánh giá': section.title,
+          'Nội dung': crit.content,
+          'Điểm tối đa': crit.maxPoints,
+          'SV tự chấm': details[crit.id]?.self || 0,
+          'Lớp chấm': details[crit.id]?.class || 0,
+          'Chênh lệch': (details[crit.id]?.class || 0) - (details[crit.id]?.self || 0),
+          'Số minh chứng': Array.isArray(details[crit.id]?.proofs) ? details[crit.id].proofs.length : 0,
+          'Danh sách minh chứng': Array.isArray(details[crit.id]?.proofs) ? details[crit.id].proofs.join('\n') : ''
+        }))
+      );
 
-      // Add total score
-      excelData.push({
-        'Tên mục': 'TỔNG ĐIỂM RÈN LUYỆN',
-        'Tự chấm': calculateDRLScore(details, EVALUATION_DATA, 'self'),
-        'Lớp chấm': calculateDRLScore(details, EVALUATION_DATA, 'class')
-      });
-
-      const ws = XLSX.utils.json_to_sheet(excelData, { skipHeader: true });
+      const ws = XLSX.utils.json_to_sheet(detailRows);
       const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, "PhieuDiem");
+      XLSX.utils.book_append_sheet(wb, summarySheet, 'PhieuDiemRL');
+      XLSX.utils.book_append_sheet(wb, ws, 'ChiTietTieuChi');
       
-      // Set column widths
       ws['!cols'] = [
-        { wch: 80 }, // Content
-        { wch: 15 }, // Self
-        { wch: 15 }  // Class
+        { wch: 14 },
+        { wch: 34 },
+        { wch: 70 },
+        { wch: 12 },
+        { wch: 12 },
+        { wch: 12 },
+        { wch: 12 },
+        { wch: 14 },
+        { wch: 80 }
       ];
 
-      XLSX.writeFile(wb, `PhieuDiemRL_${user.username}.xlsx`);
+      XLSX.writeFile(wb, `PhieuDiemRL_${studentId}_${selectedPeriod || 'unknown'}.xlsx`);
     } catch (err) {
       console.error('Export failed', err);
       toast.error('Không thể xuất file Excel. Vui lòng thử lại.');
@@ -639,46 +672,58 @@ export default function EvaluationPage() {
           </div>
         </div>
 
-        <div className="flex flex-wrap gap-3 items-center">
+        <div className="flex flex-wrap gap-2 md:gap-3 items-center w-full md:w-auto sm:justify-end">
           <button 
             onClick={loadData}
-            className="p-2.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-all active:scale-95"
+            className="p-2 md:p-2.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg md:rounded-xl transition-all active:scale-95"
             title="Tải lại dữ liệu"
           >
-            <RefreshCw size={20} className={loading ? "animate-spin" : ""} />
+            <RefreshCw size={18} className={`${loading ? "animate-spin" : ""} md:w-5 md:h-5`} />
           </button>
           
-          <div className="h-8 w-px bg-slate-200 mx-1 hidden sm:block"></div>
+          <div className="h-6 md:h-8 w-px bg-slate-200 mx-0.5 md:mx-1 hidden sm:block"></div>
 
           <button 
             onClick={() => setIsPreviewOpen(true)}
-            className="flex items-center gap-2 px-5 py-2.5 bg-white hover:bg-slate-50 text-slate-700 font-bold rounded-xl border border-slate-200 shadow-sm transition-all active:scale-95"
+            className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 md:gap-2 px-2.5 py-2 md:px-5 md:py-2.5 bg-white hover:bg-slate-50 text-slate-700 text-[13px] md:text-base font-bold rounded-lg md:rounded-xl border border-slate-200 shadow-sm transition-all active:scale-95 whitespace-nowrap"
           >
-            <Eye size={18} className="text-blue-500" />
+            <Eye size={16} className="text-blue-500 md:w-[18px] md:h-[18px]" />
             Xem phiếu
           </button>
           
           <button 
             onClick={exportExcel}
             disabled={exporting}
-            className="flex items-center gap-2 px-5 py-2.5 bg-white hover:bg-slate-50 text-slate-700 font-bold rounded-xl border border-slate-200 shadow-sm transition-all active:scale-95 disabled:opacity-50"
+            className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 md:gap-2 px-2.5 py-2 md:px-5 md:py-2.5 bg-white hover:bg-slate-50 text-slate-700 text-[13px] md:text-base font-bold rounded-lg md:rounded-xl border border-slate-200 shadow-sm transition-all active:scale-95 disabled:opacity-50 whitespace-nowrap"
           >
-            {exporting ? <Loader2 className="animate-spin" size={18} /> : <FileSpreadsheet size={18} className="text-emerald-500" />}
+            {exporting ? <Loader2 className="animate-spin" size={16} /> : <FileSpreadsheet size={16} className="text-emerald-500 md:w-[18px] md:h-[18px]" />}
             Xuất Excel
           </button>
           
           <button 
             onClick={() => handleSave('draft')}
             disabled={saving}
-            className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white font-bold rounded-xl shadow-lg shadow-blue-100 hover:bg-blue-700 transition-all active:scale-95 disabled:opacity-50"
+            className="w-full sm:w-auto flex items-center justify-center gap-1.5 md:gap-2 px-4 py-2 mt-1 sm:mt-0 md:px-5 md:py-2.5 bg-blue-600 text-white text-[13px] md:text-base font-bold rounded-lg md:rounded-xl shadow-md sm:shadow-lg shadow-blue-100 hover:bg-blue-700 transition-all active:scale-95 disabled:opacity-50 whitespace-nowrap"
           >
-            <Save size={18} />
+            <Save size={16} className="md:w-[18px] md:h-[18px]" />
             Lưu nháp
           </button>
         </div>
       </div>
 
       <div className="space-y-6">
+        {scoreStatus === 'rejected' && rejectionFeedback && rejectedAt && (
+          <RejectionNotification
+            feedback={rejectionFeedback}
+            rejectedAt={rejectedAt}
+            submissionAttempt={submissionAttempt}
+            onResubmit={() => {
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+              toast.info('Chỉnh sửa phiếu điểm của bạn rồi nhấn "Nộp lại" để gửi lại');
+            }}
+          />
+        )}
+        
         {EVALUATION_DATA.map((section) => (
           <EvaluationSection 
             key={section.id}
@@ -701,6 +746,7 @@ export default function EvaluationPage() {
         totalScore={totalScore}
         saving={saving}
         onSave={handleSave}
+        scoreStatus={scoreStatus}
         periodStatus={getPeriodStatus()}
       />
       <div className="absolute top-0 left-0 opacity-0 pointer-events-none z-[-1]" style={{ width: '210mm' }} id="printable-scorecard-container">

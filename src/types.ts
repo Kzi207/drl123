@@ -61,7 +61,10 @@ export interface DRLScore {
   bchScore: number;
   finalScore: number;
   details: string | any; // JSON string or object
-  status: 'draft' | 'submitted' | 'class_approved' | 'bch_approved' | 'finalized';
+  status: 'draft' | 'submitted' | 'rejected' | 'class_approved' | 'bch_approved' | 'finalized';
+  rejectionFeedback?: string | null;
+  rejectedAt?: string | null;
+  submissionAttempt?: number;
   updatedAt?: string;
 }
 

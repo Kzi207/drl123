@@ -32,35 +32,35 @@ export const AdminEvaluationSection: React.FC<AdminEvaluationSectionProps> = Rea
       <button 
         onClick={() => onToggle(section.id)}
         className={cn(
-          "w-full flex items-center justify-between p-4 transition-colors text-left",
+          "w-full flex items-center justify-between p-3 md:p-4 transition-colors text-left gap-2 md:gap-4",
           isExpanded ? "bg-slate-50/80 border-b border-slate-100" : "bg-white hover:bg-slate-50"
         )}
       >
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3 md:gap-4 flex-1">
           <div className={cn(
-            "w-10 h-10 rounded-xl flex items-center justify-center font-bold text-sm shadow-sm transition-all",
+            "w-8 h-8 md:w-10 md:h-10 shrink-0 rounded-lg md:rounded-xl flex items-center justify-center font-bold text-xs md:text-sm shadow-sm transition-all",
             isExpanded ? "bg-blue-600 text-white scale-110" : "bg-slate-100 text-slate-500"
           )}>
             {section.id.split('-')[1]}
           </div>
-          <h3 className="font-bold text-slate-800 text-base md:text-lg leading-tight max-w-md">{section.title}</h3>
+          <h3 className="font-bold text-slate-800 text-[13px] md:text-lg leading-tight md:max-w-md">{section.title}</h3>
         </div>
-        <div className="flex items-center gap-6">
-          <div className="flex gap-6">
-            <div className="flex flex-col items-end">
-              <span className="text-[9px] text-slate-400 uppercase font-black tracking-widest mb-0.5">Tự chấm</span>
-              <span className="text-sm font-black text-slate-600">{Math.min(sectionScoreSelf, section.maxPoints)}</span>
+        <div className="flex items-center gap-2 md:gap-6 shrink-0">
+          <div className="flex gap-3 md:gap-6">
+            <div className="flex flex-col items-center md:items-end">
+              <span className="text-[8px] md:text-[9px] text-slate-400 uppercase font-black tracking-widest mb-0.5">Tự chấm</span>
+              <span className="text-[11px] md:text-sm font-black text-slate-600 px-1 py-0.5">{Math.min(sectionScoreSelf, section.maxPoints)}</span>
             </div>
-            <div className="flex flex-col items-end">
-              <span className="text-[9px] text-blue-400 uppercase font-black tracking-widest mb-0.5">Lớp chấm</span>
-              <span className="text-sm font-black text-blue-600">{Math.min(sectionScoreClass, section.maxPoints)}</span>
+            <div className="flex flex-col items-center md:items-end">
+              <span className="text-[8px] md:text-[9px] text-blue-400 uppercase font-black tracking-widest mb-0.5">Lớp chấm</span>
+              <span className="text-[11px] md:text-sm font-black text-blue-600 px-1 py-0.5">{Math.min(sectionScoreClass, section.maxPoints)}</span>
             </div>
           </div>
           <div className={cn(
-            "p-2 rounded-full transition-all",
+            "p-1 md:p-2 rounded-full transition-all shrink-0",
             isExpanded ? "bg-blue-100 text-blue-600 rotate-180" : "bg-slate-100 text-slate-400"
           )}>
-            <ChevronDown size={20} />
+            <ChevronDown size={16} className="md:w-5 md:h-5" />
           </div>
         </div>
       </button>

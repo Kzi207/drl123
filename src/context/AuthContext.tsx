@@ -17,7 +17,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return saved ? JSON.parse(saved) : null;
   });
   const [adminToken, setAdminToken] = useState<string | null>(() => {
-    return localStorage.getItem('drl_admin_token');
+    // Try to get JWT token (stored after login)
+    return localStorage.getItem('drl_token') || localStorage.getItem('drl_admin_token');
   });
 
   const login = (userData: User, token?: string) => {
@@ -25,6 +26,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     localStorage.setItem('drl_user', JSON.stringify(userData));
     if (token) {
       setAdminToken(token);
+      // Store JWT token in both locations for wider compatibility
+      localStorage.setItem('drl_token', token);
       localStorage.setItem('drl_admin_token', token);
     }
   };
@@ -33,6 +36,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(null);
     setAdminToken(null);
     localStorage.removeItem('drl_user');
+    localStorage.removeItem('drl_token');
     localStorage.removeItem('drl_admin_token');
   };
 
